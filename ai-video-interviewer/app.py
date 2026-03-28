@@ -99,27 +99,32 @@ def process_response():
     if 'audio' not in request.files or 'conversation_history' not in request.form:
         return jsonify({"error": "Missing audio or conversation history"}), 400
 
-    audio_file = request.files['audio']
-    conversation_history = request.form['conversation_history']
+    # 1. Get user response text (from audio or direct text)
+    conversation_history = request.form.get('conversation_history', '')
+    user_response_text = request.form.get('text', '')
     
-    # 1. Transcribe audio to text
-    try:
-        input_filename = "temp_user_audio.webm"
-        wav_filename = "temp_user_audio.wav"
-        audio_file.save(input_filename)
-        AudioSegment.from_file(input_filename).export(wav_filename, format="wav")
-        
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(wav_filename) as source:
-            audio_data = recognizer.record(source)
-            user_response_text = recognizer.recognize_google(audio_data)
-    except Exception as e:
-        print(f"Audio Processing Error: {e}")
-        # This error message should no longer appear with the hard-coded paths.
-        user_response_text = "(Error processing audio. Please check server logs.)"
-    finally:
-        if os.path.exists(input_filename): os.remove(input_filename)
-        if os.path.exists(wav_filename): os.remove(wav_filename)
+    if 'audio' in request.files and request.files['audio'].filename != '':
+        audio_file = request.files['audio']
+        try:
+            input_filename = "temp_user_audio.webm"
+            wav_filename = "temp_user_audio.wav"
+            audio_file.save(input_filename)
+            AudioSegment.from_file(input_filename).export(wav_filename, format="wav")
+            
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(wav_filename) as source:
+                audio_data = recognizer.record(source)
+                user_response_text = recognizer.recognize_google(audio_data)
+        except Exception as e:
+            print(f"Audio Processing Error: {e}")
+            if not user_response_text:
+                user_response_text = "(Error processing audio. Please type your response.)"
+        finally:
+            if os.path.exists(input_filename): os.remove(input_filename)
+            if os.path.exists(wav_filename): os.remove(wav_filename)
+    
+    if not user_response_text:
+        return jsonify({"error": "No response provided (audio or text)"}), 400
 
     # 2. Get next AI response
     try:
