@@ -7,7 +7,7 @@ import TalkingAvatar from '../components/TalkingAvatar'
 import VoiceSelector from '../components/VoiceSelector'
 import ProctoringAlert from '../components/ProctoringAlert'
 import { useToast } from '../components/Toast'
-import { apiUrl, getBackendBaseUrl, getSocketServerUrl } from '../lib/runtimeConfig'
+import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
 
 const BACKEND = getBackendBaseUrl()
 const SIGNAL  = getSocketServerUrl()
@@ -758,7 +758,7 @@ export default function InterviewRoom() {
   }
 
   function copyLink() {
-    navigator.clipboard.writeText(`${window.location.origin}/interview/${roomId}`).then(() => toast.info('Link copied!')).catch(() => {})
+    navigator.clipboard.writeText(interviewUrl(roomId)).then(() => toast.info('Link copied!')).catch(() => {})
   }
 
   /* ═══════════════════ RENDER ═══════════════════ */

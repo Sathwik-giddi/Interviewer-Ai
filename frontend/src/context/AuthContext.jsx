@@ -7,6 +7,7 @@ import {
 } from 'firebase/auth'
 import { doc, setDoc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../firebase'
+import { getCurrentRoutePath } from '../lib/runtimeConfig'
 
 const AuthContext = createContext(null)
 
@@ -129,7 +130,7 @@ export function AuthProvider({ children }) {
           }
         } catch (e) {
           console.warn('Auth role fetch error (likely offline):', e)
-          const path = window.location.pathname
+          const path = getCurrentRoutePath()
           if (cachedRole) {
             setUserRole(cachedRole)
           } else if (path.startsWith('/hr') || path.startsWith('/observe')) {

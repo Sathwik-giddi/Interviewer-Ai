@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { interviewUrl, routePathFromAppUrl } from '../lib/runtimeConfig'
 
 const FEATURES = [
   {
@@ -53,7 +54,7 @@ export default function Landing() {
 
   function generateLink() {
     const id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
-    const url = `${window.location.origin}/interview/${id}`
+    const url = interviewUrl(id)
     setGeneratedLink(url)
     setCopied(false)
   }
@@ -181,11 +182,14 @@ export default function Landing() {
                 </button>
               </div>
               <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center', fontSize: '13px' }} onClick={() => navigate(generatedLink.replace(window.location.origin, ''))}>
+                <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center', fontSize: '13px' }} onClick={() => navigate(routePathFromAppUrl(generatedLink))}>
                   Join as Candidate
                 </button>
                 {currentUser && (
-                  <button className="btn btn-outline" style={{ flex: 1, justifyContent: 'center', fontSize: '13px' }} onClick={() => navigate(generatedLink.replace(window.location.origin, '').replace('/interview/', '/observe/'))}>
+                  <button className="btn btn-outline" style={{ flex: 1, justifyContent: 'center', fontSize: '13px' }} onClick={() => {
+                    const roomId = routePathFromAppUrl(generatedLink).split('/').pop()
+                    navigate(`/observe/${roomId}`)
+                  }}>
                     Observe as HR
                   </button>
                 )}

@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
 import { collection, getDocs, addDoc, doc, updateDoc, query, where, orderBy } from 'firebase/firestore'
 import { db } from '../firebase'
-import { apiUrl } from '../lib/runtimeConfig'
+import { apiUrl, interviewUrl } from '../lib/runtimeConfig'
 
 export default function HRCandidates() {
   const { currentUser } = useAuth()
@@ -106,7 +106,7 @@ export default function HRCandidates() {
 
   async function scheduleInterview(candidate) {
     const roomId = `interview-${candidate.id.substring(0, 8)}-${Date.now().toString(36)}`
-    const link = `${window.location.origin}/interview/${roomId}`
+    const link = interviewUrl(roomId)
 
     // Update candidate with interview link
     try {

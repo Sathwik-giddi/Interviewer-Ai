@@ -12,7 +12,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
 import { io } from 'socket.io-client'
-import { apiUrl, getBackendBaseUrl, getSocketServerUrl } from '../lib/runtimeConfig'
+import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
 
 const SIGNAL  = getSocketServerUrl()
 const BACKEND = getBackendBaseUrl()
@@ -318,7 +318,7 @@ export default function HRObserverRoom() {
 
         {/* Share link */}
         <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', marginTop: 'auto' }}>
-          <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center', fontSize: '11px' }} onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/interview/${campaignId}`); toast.info('Copied!') }}>
+          <button className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center', fontSize: '11px' }} onClick={() => { navigator.clipboard.writeText(interviewUrl(campaignId)); toast.info('Copied!') }}>
             📋 Copy Candidate Link
           </button>
         </div>
@@ -400,8 +400,8 @@ export default function HRObserverRoom() {
                 <div style={{ textAlign: 'center', padding: '60px 20px' }}>
                   <span style={{ fontSize: '48px' }}>⏳</span>
                   <p style={{ fontSize: '16px', color: 'var(--text-muted)', marginTop: '16px' }}>Waiting for candidate to start…</p>
-                  <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', marginTop: '16px', wordBreak: 'break-all' }}>
-                    {window.location.origin}/interview/{campaignId}
+                <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', padding: '12px 16px', fontSize: '13px', fontFamily: 'monospace', marginTop: '16px', wordBreak: 'break-all' }}>
+                    {interviewUrl(campaignId)}
                   </div>
                   <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px' }}>Share this link with the candidate.</p>
                 </div>

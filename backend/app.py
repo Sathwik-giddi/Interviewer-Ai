@@ -127,6 +127,12 @@ def resolve_public_frontend_url(explicit_url: str = '') -> str:
     return 'http://localhost:5173'
 
 
+def build_frontend_app_url(frontend_url: str, route_path: str) -> str:
+    base_url = (frontend_url or '').strip().rstrip('/')
+    normalized_path = route_path if route_path.startswith('/') else f'/{route_path}'
+    return f'{base_url}/#{normalized_path}'
+
+
 def parse_client_datetime(value: str | None):
     if not value:
         return datetime.datetime.utcnow()
@@ -1210,10 +1216,10 @@ def generate_link():
 
         # ── Build the full URL ──
         if link_type == 'mock':
-            full_link = f"{frontend_url}/mock?token={link_id}"
+            full_link = build_frontend_app_url(frontend_url, f"/mock?token={link_id}")
         else:
             room_id = campaign_id or f"link-{link_id[:12]}-{secrets.token_hex(4)}"
-            full_link = f"{frontend_url}/interview/{room_id}"
+            full_link = build_frontend_app_url(frontend_url, f"/interview/{room_id}")
 
         # ── Store link data ──
         link_data = {

@@ -53,3 +53,47 @@ export function apiUrl(path) {
 export function getPublicAppOrigin() {
   return getBrowserOrigin() || stripTrailingSlash((import.meta.env.VITE_PUBLIC_APP_URL || '').trim())
 }
+
+export function normalizeRoutePath(path = '/') {
+  if (!path) return '/'
+  return path.startsWith('/') ? path : `/${path}`
+}
+
+export function appUrl(path = '/') {
+  const normalizedPath = normalizeRoutePath(path)
+  return `${getPublicAppOrigin()}/#${normalizedPath}`
+}
+
+export function interviewUrl(roomId) {
+  return appUrl(`/interview/${roomId}`)
+}
+
+export function observerUrl(campaignId) {
+  return appUrl(`/observe/${campaignId}`)
+}
+
+export function getCurrentRoutePath() {
+  if (typeof window === 'undefined') return '/'
+  const hash = window.location.hash || ''
+  if (hash.startsWith('#/')) return hash.slice(1)
+  return window.location.pathname || '/'
+}
+
+export function routePathFromAppUrl(rawUrl = '') {
+  if (!rawUrl) return '/'
+
+  const fallbackBase = getPublicAppOrigin() || 'http://localhost'
+
+  try {
+    const parsed = new URL(rawUrl, fallbackBase)
+    if (parsed.hash.startsWith('#/')) {
+      return `${parsed.hash.slice(1)}${parsed.search}`
+    }
+
+    return `${parsed.pathname}${parsed.search}`
+  } catch {
+    if (rawUrl.startsWith('#/')) return rawUrl.slice(1)
+    if (rawUrl.startsWith('/')) return rawUrl
+    return normalizeRoutePath(rawUrl)
+  }
+}
