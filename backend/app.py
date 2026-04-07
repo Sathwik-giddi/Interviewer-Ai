@@ -1463,11 +1463,10 @@ def generate_link():
         cache_link_data(link_data)
 
         # ── Send email via Resend ──
-        # NOTE: Resend free tier can only send to the verified owner email.
-        # We always send to the REPLY_TO_EMAIL and include candidate info in the body.
+        # Directly send to the candidate email. If the configured sender is still using
+        # resend.dev, Resend will reject non-owner recipients until a custom domain is verified.
         email_result = {"sent": False, "method": "none"}
         email_error = None
-        verified_email = os.environ.get('REPLY_TO_EMAIL', 'giddisathwik.ai@gmail.com')
         if email:
             is_mock = link_type == 'mock'
             html_body = build_interview_email(
@@ -1477,21 +1476,9 @@ def generate_link():
                 note=note,
                 is_mock=is_mock,
             )
-            # Add forwarding note if sending to a different candidate
-            if email.lower() != verified_email.lower():
-                html_body = html_body.replace(
-                    '</body>',
-                    f'<p style="margin-top:20px;padding:12px;background:#f5f3ff;border:1px solid #e8e4f0;font-size:13px;color:#555;">'
-                    f'<strong>Forward this email to:</strong> {email}<br>'
-                    f'<em>Resend free tier only delivers to the verified account. Please forward this to the candidate.</em>'
-                    f'</p></body>'
-                )
             subject = f"{'Mock ' if is_mock else ''}Interview Invitation{' — ' + job_title if job_title else ''}"
-            if email.lower() != verified_email.lower():
-                subject = f"[Forward to {email}] {subject}"
             try:
-                # Always send to verified email (free tier limitation)
-                email_result = send_email(verified_email, subject, html_body)
+                email_result = send_email(email, subject, html_body)
             except (ValueError, RuntimeError) as email_err:
                 email_error = str(email_err)
                 print(f"[LINK] Link {link_id} created but email failed: {email_error}")
@@ -1505,9 +1492,9 @@ def generate_link():
             "emailSent": email_result.get("sent", False),
             "emailMethod": email_result.get("method", "none"),
             "emailError": email_error,
-            "emailDeliveredTo": verified_email if email_result.get("sent", False) else None,
+            "emailDeliveredTo": email if email_result.get("sent", False) else None,
             "emailRequestedFor": email or None,
-            "emailForwardRequired": bool(email and email.lower() != verified_email.lower()),
+            "emailForwardRequired": False,
             "storedIn": "firestore" if firestore_saved else "memory",
         })
 
