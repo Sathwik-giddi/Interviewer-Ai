@@ -50,3 +50,6 @@ temp_*
 
 # Claude session data
 .claude/
+backend/.env
+server/.env
+frontend/.env
