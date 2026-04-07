@@ -738,6 +738,8 @@ export default function InterviewRoom() {
     const video = localVideoRef.current
     if (!video) return
     const warnings = []
+    let nextMood = null
+    let nextObjects = []
 
     // ── Face detection + expressions ──
     if (window.faceapi) {
@@ -764,6 +766,7 @@ export default function InterviewRoom() {
             const [topExpr, topConf] = sorted[0]
             const moodMap = { happy: 'Happy', sad: 'Sad', angry: 'Angry', fearful: 'Nervous', disgusted: 'Disgusted', surprised: 'Surprised', neutral: 'Neutral' }
             const mood = { expression: moodMap[topExpr] || topExpr, confidence: Math.round(topConf * 100) }
+            nextMood = mood
             setCurrentMood(mood)
 
             // Alert on concerning expressions
@@ -783,7 +786,8 @@ export default function InterviewRoom() {
         const found = predictions.filter(p => suspiciousObjects.some(o => p.class.toLowerCase().includes(o)) && p.score > 0.5)
         const personCount = predictions.filter(p => p.class === 'person' && p.score > 0.5).length
 
-        setDetectedObjects(found.map(f => ({ name: f.class, confidence: Math.round(f.score * 100) })))
+        nextObjects = found.map(f => ({ name: f.class, confidence: Math.round(f.score * 100) }))
+        setDetectedObjects(nextObjects)
 
         if (found.length > 0) {
           const objNames = [...new Set(found.map(f => f.class))].join(', ')
@@ -820,8 +824,8 @@ export default function InterviewRoom() {
     if (socketRef.current) {
       socketRef.current.emit('proctoring-state', {
         roomId,
-        mood: currentMood,
-        objects: detectedObjects,
+        mood: nextMood,
+        objects: nextObjects,
         warnings: warnings.map(w => w.msg),
       })
     }

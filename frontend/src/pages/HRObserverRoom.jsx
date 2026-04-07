@@ -17,6 +17,8 @@ import { buildRtcConfigAsync, getSelectedCandidatePairInfo } from '../lib/webrtc
 
 const SIGNAL  = getSocketServerUrl()
 const BACKEND = getBackendBaseUrl()
+const STREAM_RETRY_INTERVAL_MS = 2500
+const STREAM_RETRY_LIMIT = 6
 
 export default function HRObserverRoom() {
   const { campaignId } = useParams()
@@ -61,6 +63,70 @@ export default function HRObserverRoom() {
   const peerRef           = useRef(null)
   const socketRef         = useRef(null)
   const pendingCandidates = useRef([])
+  const streamRetryTimerRef = useRef(null)
+  const streamRetryCountRef = useRef(0)
+  const lastStreamRequestAtRef = useRef(0)
+  const candidatePresentRef = useRef(false)
+  const streamActiveRef = useRef(false)
+
+  useEffect(() => { candidatePresentRef.current = candidatePresent }, [candidatePresent])
+  useEffect(() => { streamActiveRef.current = streamActive }, [streamActive])
+
+  function appendAlert(warning, ts = new Date().toLocaleTimeString()) {
+    const text = typeof warning === 'string' ? warning : warning?.message || warning?.warning || ''
+    if (!text) return
+    setProcAlerts(prev => [{ warning: text, ts }, ...prev].slice(0, 50))
+  }
+
+  function updateMoodFromAlertText(text) {
+    const warning = String(text || '').trim()
+    if (!warning) return
+
+    const expressionMatch = warning.match(/expression alert:\s*([a-z ]+?)(?:\s*\((\d+)% confidence\))?$/i)
+    if (expressionMatch) {
+      setCandidateMood({
+        expression: expressionMatch[1].trim(),
+        confidence: Number(expressionMatch[2] || 100),
+      })
+      return
+    }
+
+    const moodMatch = warning.match(/\b(happy|sad|angry|nervous|surprised|disgusted|neutral|fearful)\b/i)
+    if (moodMatch) {
+      setCandidateMood(prev => ({
+        expression: normalizeExpressionLabel(moodMatch[1]),
+        confidence: prev?.confidence || 100,
+      }))
+    }
+  }
+
+  function updateObjectsFromAlertText(text) {
+    const warning = String(text || '').trim()
+    if (!warning) return
+    const objectMatch = warning.match(/foreign object detected:\s*(.+)$/i)
+    if (!objectMatch) return
+    const names = objectMatch[1]
+      .split(',')
+      .map(name => name.trim())
+      .filter(Boolean)
+
+    if (!names.length) return
+    setCandidateObjects(names.map(name => ({ name, confidence: 100 })))
+  }
+
+  function applyAlertToProctoringState(warning) {
+    updateMoodFromAlertText(warning)
+    updateObjectsFromAlertText(warning)
+  }
+
+  function requestCandidateStream({ resetAttempts = false } = {}) {
+    if (!socketRef.current || !campaignId || !candidatePresentRef.current || streamActiveRef.current) return
+    if (resetAttempts) streamRetryCountRef.current = 0
+    lastStreamRequestAtRef.current = Date.now()
+    streamRetryCountRef.current += 1
+    socketRef.current.emit('request-stream', { roomId: campaignId })
+    addLog('system', `Requested candidate stream${streamRetryCountRef.current > 1 ? ` (retry ${streamRetryCountRef.current})` : ''}.`)
+  }
 
   /* ═══════════════════ SOCKET + WEBRTC ═══════════════════ */
   useEffect(() => {
@@ -79,19 +145,24 @@ export default function HRObserverRoom() {
       if (role === 'candidate') {
         setCandidatePresent(true)
         addLog('system', 'Candidate joined.')
-        // Request their video stream
-        socket.emit('request-stream', { roomId: campaignId })
+        requestCandidateStream({ resetAttempts: true })
       }
     })
     socket.on('room-state', ({ hasCandidate }) => {
       setCandidatePresent(hasCandidate)
       if (hasCandidate) {
         addLog('system', 'Candidate in room.')
-        // Request their video stream (they might have joined before us)
-        socket.emit('request-stream', { roomId: campaignId })
+        requestCandidateStream({ resetAttempts: true })
       }
     })
-    socket.on('peer-left', ({ role }) => { if (role === 'candidate') { setCandidatePresent(false); setStreamActive(false); addLog('system', 'Candidate left.') } })
+    socket.on('peer-left', ({ role }) => {
+      if (role === 'candidate') {
+        setCandidatePresent(false)
+        setStreamActive(false)
+        streamRetryCountRef.current = 0
+        addLog('system', 'Candidate left.')
+      }
+    })
 
     // WebRTC
     socket.on('offer', async ({ from, offer }) => {
@@ -126,15 +197,30 @@ export default function HRObserverRoom() {
     })
 
     // Proctoring
-    socket.on('proctoring-alert', ({ warning }) => {
-      setProcAlerts(prev => [{ warning, ts: new Date().toLocaleTimeString() }, ...prev].slice(0, 50))
-    })
+    const handleProctoringAlert = (payload = {}) => {
+      const warning = typeof payload === 'string'
+        ? payload
+        : payload.warning || payload.message || payload.alert || payload.text
+      const ts = new Date().toLocaleTimeString()
+      appendAlert(warning, ts)
+      applyAlertToProctoringState(warning)
+    }
+    socket.on('proctoring-alert', handleProctoringAlert)
 
     // Proctoring state — mood + objects
-    socket.on('proctoring-state', (data) => {
-      if (data.mood) setCandidateMood(data.mood)
-      if (data.objects) setCandidateObjects(data.objects)
-    })
+    const handleProctoringState = (data = {}) => {
+      const nextMood = extractMood(data)
+      const nextObjects = extractObjects(data)
+      const warnings = extractWarnings(data)
+
+      if (nextMood) setCandidateMood(nextMood)
+      if (nextObjects) setCandidateObjects(nextObjects)
+      warnings.forEach(warning => applyAlertToProctoringState(warning))
+    }
+    socket.on('proctoring-state', handleProctoringState)
+    socket.on('proctoring-update', handleProctoringState)
+    socket.on('candidate-mood', handleProctoringState)
+    socket.on('object-detection', handleProctoringState)
 
     // Custom question spoken confirmation
     socket.on('hr-question-spoken', () => { addLog('system', 'Custom question delivered to candidate.') })
@@ -142,8 +228,30 @@ export default function HRObserverRoom() {
     // End
     socket.on('interview-ended', () => { setSessionEnded(true); addLog('system', 'Interview ended.') })
 
-    return () => { socket.disconnect(); peerRef.current?.close(); localStreamRef.current?.getTracks().forEach(t => t.stop()) }
+    return () => {
+      clearInterval(streamRetryTimerRef.current)
+      socket.disconnect()
+      peerRef.current?.close()
+      localStreamRef.current?.getTracks().forEach(t => t.stop())
+    }
   }, [campaignId, currentUser])
+
+  useEffect(() => {
+    clearInterval(streamRetryTimerRef.current)
+    if (!candidatePresent || streamActive) return
+
+    if (Date.now() - lastStreamRequestAtRef.current > 1000) {
+      requestCandidateStream()
+    }
+
+    streamRetryTimerRef.current = setInterval(() => {
+      if (!candidatePresent || streamActive) return
+      if (streamRetryCountRef.current >= STREAM_RETRY_LIMIT) return
+      requestCandidateStream()
+    }, STREAM_RETRY_INTERVAL_MS)
+
+    return () => clearInterval(streamRetryTimerRef.current)
+  }, [candidatePresent, streamActive, campaignId])
 
   function addLog(type, text) {
     setChatLog(prev => [...prev, { type, text, ts: new Date().toLocaleTimeString() }])
@@ -160,12 +268,23 @@ export default function HRObserverRoom() {
     pc.onicecandidate = ({ candidate }) => { if (candidate) socketRef.current?.emit('ice-candidate', { to: remotePeerId, candidate }) }
     pc.ontrack = ({ streams }) => {
       if (remoteVideoRef.current && streams[0]) {
+        const [videoTrack] = streams[0].getVideoTracks()
         remoteVideoRef.current.srcObject = streams[0]
         remoteVideoRef.current.play?.().catch(() => {})
         setStreamActive(true)
+        streamRetryCountRef.current = 0
+        if (videoTrack) {
+          videoTrack.onunmute = () => setStreamActive(true)
+          videoTrack.onended = () => setStreamActive(false)
+          videoTrack.onmute = () => setStreamActive(false)
+        }
       }
     }
     pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'connected') {
+        setStreamActive(true)
+        streamRetryCountRef.current = 0
+      }
       if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') setStreamActive(false)
     }
     return pc
@@ -510,6 +629,84 @@ export default function HRObserverRoom() {
       </div>
     </div>
   )
+}
+
+function normalizeExpressionLabel(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const canonical = {
+    fearful: 'Nervous',
+    disgusted: 'Disgusted',
+    happy: 'Happy',
+    sad: 'Sad',
+    angry: 'Angry',
+    surprised: 'Surprised',
+    nervous: 'Nervous',
+    neutral: 'Neutral',
+  }
+  return canonical[raw.toLowerCase()] || raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+function normalizeMood(input) {
+  if (!input) return null
+  if (typeof input === 'string') {
+    return { expression: normalizeExpressionLabel(input), confidence: 100 }
+  }
+
+  const expression = normalizeExpressionLabel(
+    input.expression || input.mood || input.label || input.name || input.state
+  )
+  if (!expression) return null
+
+  const numericConfidence = Number(
+    input.confidence ?? input.score ?? input.probability ?? input.percent ?? input.value ?? 100
+  )
+  const confidence = numericConfidence <= 1 ? Math.round(numericConfidence * 100) : Math.round(numericConfidence)
+
+  return { expression, confidence: Number.isFinite(confidence) ? confidence : 100 }
+}
+
+function normalizeObjects(input) {
+  if (!Array.isArray(input)) return []
+  return input
+    .map((item) => {
+      if (typeof item === 'string') return { name: item, confidence: 100 }
+      const name = item?.name || item?.label || item?.class || item?.object
+      if (!name) return null
+      const numericConfidence = Number(item.confidence ?? item.score ?? item.probability ?? 100)
+      const confidence = numericConfidence <= 1 ? Math.round(numericConfidence * 100) : Math.round(numericConfidence)
+      return {
+        name,
+        confidence: Number.isFinite(confidence) ? confidence : 100,
+      }
+    })
+    .filter(Boolean)
+}
+
+function extractMood(data) {
+  if (!data || typeof data !== 'object') return null
+  return normalizeMood(
+    data.mood ||
+    data.currentMood ||
+    data.candidateMood ||
+    data.expression ||
+    data.faceExpression ||
+    data.state?.mood
+  )
+}
+
+function extractObjects(data) {
+  if (!data || typeof data !== 'object') return []
+  const objects = data.objects || data.detectedObjects || data.objectDetection || data.state?.objects
+  return normalizeObjects(objects)
+}
+
+function extractWarnings(data) {
+  if (!data || typeof data !== 'object') return []
+  const warnings = data.warnings || data.alerts || data.messages
+  if (Array.isArray(warnings)) return warnings.map(item => typeof item === 'string' ? item : item?.warning || item?.message).filter(Boolean)
+  const single = data.warning || data.message || data.alert || null
+  return single ? [single] : []
 }
 
 function fmtTime(s) { return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` }
