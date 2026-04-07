@@ -203,6 +203,9 @@ io.on('connection', (socket) => {
   socket.on('join-room', ({ roomId, userId, role }) => {
     socket.join(roomId)
     const resolvedRoomId = resolveRoomId(roomId)
+    if (resolvedRoomId && resolvedRoomId !== roomId) {
+      socket.join(resolvedRoomId)
+    }
     socket.data.roomId = resolvedRoomId
     socket.data.joinedRoomId = roomId
     socket.data.userId = userId

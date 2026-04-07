@@ -128,6 +128,30 @@ export default function HRObserverRoom() {
     addLog('system', `Requested candidate stream${streamRetryCountRef.current > 1 ? ` (retry ${streamRetryCountRef.current})` : ''}.`)
   }
 
+  async function attachRemoteStream(stream) {
+    const video = remoteVideoRef.current
+    if (!video || !stream) return
+
+    video.srcObject = stream
+    video.autoplay = true
+    video.playsInline = true
+    video.muted = true
+
+    const startPlayback = async () => {
+      try {
+        await video.play()
+        setStreamActive(true)
+        streamRetryCountRef.current = 0
+      } catch {
+        setStreamActive(false)
+      }
+    }
+
+    video.onloadedmetadata = startPlayback
+    video.oncanplay = startPlayback
+    await startPlayback()
+  }
+
   /* ═══════════════════ SOCKET + WEBRTC ═══════════════════ */
   useEffect(() => {
     const socket = io(SIGNAL, { transports: ['websocket', 'polling'], reconnection: true })
@@ -269,10 +293,7 @@ export default function HRObserverRoom() {
     pc.ontrack = ({ streams }) => {
       if (remoteVideoRef.current && streams[0]) {
         const [videoTrack] = streams[0].getVideoTracks()
-        remoteVideoRef.current.srcObject = streams[0]
-        remoteVideoRef.current.play?.().catch(() => {})
-        setStreamActive(true)
-        streamRetryCountRef.current = 0
+        attachRemoteStream(streams[0])
         if (videoTrack) {
           videoTrack.onunmute = () => setStreamActive(true)
           videoTrack.onended = () => setStreamActive(false)
@@ -372,7 +393,7 @@ export default function HRObserverRoom() {
         {/* Video */}
         <div style={S.videoBox}>
           {candidatePresent ? (
-            <video ref={remoteVideoRef} autoPlay playsInline controls style={S.video} />
+            <video ref={remoteVideoRef} autoPlay playsInline muted controls style={S.video} />
           ) : (
             <div style={S.noVideo}>
               <span style={{ fontSize: '40px' }}>📹</span>
