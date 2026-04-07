@@ -8,17 +8,10 @@ import VoiceSelector from '../components/VoiceSelector'
 import ProctoringAlert from '../components/ProctoringAlert'
 import { useToast } from '../components/Toast'
 import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
+import { buildRtcConfigAsync, getSelectedCandidatePairInfo, hasTurnConfig } from '../lib/webrtcConfig'
 
 const BACKEND = getBackendBaseUrl()
 const SIGNAL  = getSocketServerUrl()
-const ICE     = { iceServers: [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-] }
 
 function createDraftSessionId() {
   return `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -148,6 +141,9 @@ export default function InterviewRoom() {
   const socketRef        = useRef(null)
   const peerRef          = useRef(null)
   const timerRef         = useRef(null)
+  const remotePeerIdRef  = useRef(null)
+  const relayFallbackAttemptedRef = useRef(false)
+  const activeRelayModeRef = useRef(false)
 
   function getCurrentPageUrl() {
     return typeof window !== 'undefined' ? window.location.href : `/interview/${roomId}`
@@ -471,6 +467,9 @@ export default function InterviewRoom() {
       localStreamRef.current = stream
       if (localVideoRef.current) localVideoRef.current.srcObject = stream
       setCameraReady(true)
+      if (!hasTurnConfig()) {
+        console.warn('[WebRTC] TURN is not configured. Cross-network connectivity will be unreliable.')
+      }
     } catch {
       toast.error('Camera/mic access denied. Please allow permissions and reload.')
     }
@@ -493,13 +492,13 @@ export default function InterviewRoom() {
     })
 
     // HR requested our stream (in case they joined before us or reconnected)
-    socket.on('send-stream', ({ to }) => {
-      sendStreamToPeer(to)
+    socket.on('send-stream', ({ to, forceRelay }) => {
+      sendStreamToPeer(to, { forceRelay: Boolean(forceRelay) })
     })
 
     // WebRTC signaling
     socket.on('offer', async ({ from, offer }) => {
-      const pc = createPC(from)
+      const pc = await createPC(from)
       await pc.setRemoteDescription(new RTCSessionDescription(offer))
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
@@ -551,14 +550,40 @@ export default function InterviewRoom() {
 
   const hrAudioRef = useRef(null)
 
-  function createPC(remotePeerId) {
+  async function maybeLogSelectedPath(pc, contextLabel = 'candidate') {
+    const pair = await getSelectedCandidatePairInfo(pc)
+    if (!pair) return
+    console.info(`[WebRTC] ${contextLabel} connected via ${pair.usesRelay ? 'TURN relay' : 'direct'} (${pair.protocol || 'udp'})`, pair)
+  }
+
+  function triggerRelayFallback(reason = 'connection-failed') {
+    if (relayFallbackAttemptedRef.current || activeRelayModeRef.current || !remotePeerIdRef.current || !hasTurnConfig()) return
+    relayFallbackAttemptedRef.current = true
+    console.warn(`[WebRTC] Switching candidate stream to TURN relay after ${reason}`)
+    sendStreamToPeer(remotePeerIdRef.current, { forceRelay: true, restartIce: true }).catch(() => {})
+  }
+
+  async function createPC(remotePeerId, { forceRelay = false } = {}) {
     peerRef.current?.close()
-    const pc = new RTCPeerConnection(ICE)
+    remotePeerIdRef.current = remotePeerId
+    activeRelayModeRef.current = forceRelay
+    const config = await buildRtcConfigAsync({ forceRelay })
+    const pc = new RTCPeerConnection(config)
     peerRef.current = pc
     const stream = localStreamRef.current
     if (stream) stream.getTracks().forEach(t => pc.addTrack(t, stream))
     pc.onicecandidate = ({ candidate }) => {
       if (candidate) socketRef.current?.emit('ice-candidate', { to: remotePeerId, candidate })
+    }
+    pc.oniceconnectionstatechange = () => {
+      const state = pc.iceConnectionState
+      if (state === 'connected' || state === 'completed') maybeLogSelectedPath(pc, 'candidate')
+      if (state === 'failed') triggerRelayFallback('ice-failed')
+    }
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState
+      if (state === 'connected') maybeLogSelectedPath(pc, 'candidate')
+      if (state === 'failed' || state === 'disconnected') triggerRelayFallback(`pc-${state}`)
     }
     // Play HR's audio when they speak (remote tracks from HR observer)
     pc.ontrack = ({ streams }) => {
@@ -580,12 +605,12 @@ export default function InterviewRoom() {
     return localStreamRef.current
   }
 
-  async function sendStreamToPeer(remotePeerId) {
+  async function sendStreamToPeer(remotePeerId, { forceRelay = false, restartIce = false } = {}) {
     await getReadyLocalStream()
-    const pc = createPC(remotePeerId)
-    const offer = await pc.createOffer()
+    const pc = await createPC(remotePeerId, { forceRelay })
+    const offer = await pc.createOffer({ iceRestart: restartIce || forceRelay })
     await pc.setLocalDescription(offer)
-    socketRef.current?.emit('offer', { to: remotePeerId, offer })
+    socketRef.current?.emit('offer', { to: remotePeerId, offer, forceRelay })
   }
 
   function acceptHrSpeak() {

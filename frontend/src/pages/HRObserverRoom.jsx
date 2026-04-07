@@ -13,17 +13,10 @@ import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
 import { io } from 'socket.io-client'
 import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
+import { buildRtcConfigAsync, getSelectedCandidatePairInfo } from '../lib/webrtcConfig'
 
 const SIGNAL  = getSocketServerUrl()
 const BACKEND = getBackendBaseUrl()
-const ICE = { iceServers: [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-] }
 
 export default function HRObserverRoom() {
   const { campaignId } = useParams()
@@ -102,7 +95,7 @@ export default function HRObserverRoom() {
 
     // WebRTC
     socket.on('offer', async ({ from, offer }) => {
-      const pc = createPC(from)
+      const pc = await createPC(from)
       await pc.setRemoteDescription(new RTCSessionDescription(offer))
       for (const c of pendingCandidates.current) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
       pendingCandidates.current = []
@@ -158,10 +151,11 @@ export default function HRObserverRoom() {
 
   const remotePeerIdRef = useRef(null)
 
-  function createPC(remotePeerId) {
+  async function createPC(remotePeerId) {
     peerRef.current?.close()
     remotePeerIdRef.current = remotePeerId
-    const pc = new RTCPeerConnection(ICE)
+    const config = await buildRtcConfigAsync()
+    const pc = new RTCPeerConnection(config)
     peerRef.current = pc
     pc.onicecandidate = ({ candidate }) => { if (candidate) socketRef.current?.emit('ice-candidate', { to: remotePeerId, candidate }) }
     pc.ontrack = ({ streams }) => {

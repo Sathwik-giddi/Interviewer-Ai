@@ -19,6 +19,162 @@ app.use(cors())
 app.get('/health', (_, res) => res.json({ status: 'ok' }))
 
 /**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * TURN Credentials - Static Metered.ca Configuration
+ * Uses long-lived TURN credentials from Metered dashboard
+ * No API key required - credentials are set via environment variables
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+// Static TURN credentials from Metered.ca dashboard
+// These are long-lived credentials that don't expire
+const TURN_USERNAME = process.env.TURN_USERNAME || ''
+const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL || ''
+const TURN_DOMAIN = process.env.TURN_DOMAIN || ''
+
+// Build TURN server URLs from domain
+function buildTurnUrls() {
+  if (!TURN_DOMAIN) return []
+  return [
+    `turn:${TURN_DOMAIN}:80`,
+    `turn:${TURN_DOMAIN}:443`,
+    `turn:${TURN_DOMAIN}:443?transport=tcp`,
+    `turn:${TURN_DOMAIN}:3478`,
+  ]
+}
+
+// In-memory cache for TURN credentials
+let turnCredentialsCache = {
+  credentials: null,
+  expiresAt: 0,
+}
+
+// Cache TTL: 24 hours (static credentials don't expire, but we refresh cache periodically)
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Get static TURN credentials from environment variables
+ * @returns {Object|null} TURN credentials object or null if not configured
+ */
+function getStaticTurnCredentials() {
+  if (!TURN_USERNAME || !TURN_CREDENTIAL) {
+    return null
+  }
+
+  const urls = buildTurnUrls()
+  if (urls.length === 0) {
+    return null
+  }
+
+  return {
+    urls,
+    username: TURN_USERNAME,
+    credential: TURN_CREDENTIAL,
+    expiresAt: Date.now() + CACHE_TTL_MS,
+  }
+}
+
+/**
+ * Get TURN credentials (from cache or static config)
+ * Static credentials don't expire, but we cache them to avoid rebuilding URLs on every request
+ */
+async function getTurnCredentials() {
+  const now = Date.now()
+
+  // Return cached credentials if still valid
+  if (
+    turnCredentialsCache.credentials &&
+    turnCredentialsCache.expiresAt > now
+  ) {
+    return turnCredentialsCache.credentials
+  }
+
+  // Get static credentials from environment variables
+  const credentials = getStaticTurnCredentials()
+  
+  if (!credentials) {
+    throw new Error('TURN credentials not configured. Set TURN_USERNAME, TURN_CREDENTIAL, and TURN_DOMAIN in environment variables.')
+  }
+
+  // Update cache
+  turnCredentialsCache = {
+    credentials,
+    expiresAt: credentials.expiresAt,
+  }
+
+  console.log('[TURN] Using static TURN credentials')
+  return credentials
+}
+
+/**
+ * GET /api/turn-credentials
+ * Returns TURN server configuration for WebRTC
+ * No authentication required (public endpoint, credentials are temporary)
+ */
+app.get('/api/turn-credentials', async (req, res) => {
+  try {
+    const credentials = await getTurnCredentials()
+
+    res.json({
+      iceServers: [
+        // STUN servers (always included, free)
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        // TURN server from Metered
+        {
+          urls: credentials.urls,
+          username: credentials.username,
+          credential: credentials.credential,
+        },
+      ],
+      expiresAt: credentials.expiresAt,
+    })
+  } catch (error) {
+    console.error('[TURN] Error fetching credentials:', error.message)
+    res.status(500).json({
+      error: 'Failed to fetch TURN credentials',
+      message: error.message,
+    })
+  }
+})
+
+/**
+ * GET /api/turn-credentials/validate
+ * Check if current credentials are still valid
+ */
+app.get('/api/turn-credentials/validate', (req, res) => {
+  const now = Date.now()
+  const isValid = turnCredentialsCache.credentials && turnCredentialsCache.expiresAt > now
+
+  res.json({
+    valid: isValid,
+    expiresAt: turnCredentialsCache.expiresAt || null,
+    expiresIn: isValid ? Math.floor((turnCredentialsCache.expiresAt - now) / 1000) : 0,
+  })
+})
+
+/**
+ * POST /api/turn-credentials/refresh
+ * Force refresh credentials (admin endpoint)
+ */
+app.post('/api/turn-credentials/refresh', async (req, res) => {
+  try {
+    // Clear cache and fetch fresh
+    turnCredentialsCache = { credentials: null, expiresAt: 0, lastFetched: 0 }
+    const credentials = await getTurnCredentials()
+
+    res.json({
+      success: true,
+      expiresAt: credentials.expiresAt,
+    })
+  } catch (error) {
+    console.error('[TURN] Error refreshing credentials:', error.message)
+    res.status(500).json({ error: 'Failed to refresh credentials' })
+  }
+})
+
+/**
  * Room structure:
  *   rooms[roomId] = {
  *     candidate: socketId | null,

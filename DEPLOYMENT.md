@@ -1,142 +1,170 @@
-# Production Deployment
+# Production Deployment Guide
 
-This project should be deployed as a split stack:
+This project is deployed as a split stack:
 
-- `frontend/` on Vercel
-- `backend/` on Render, Railway, Fly.io, or another Python host
-- `server/` on Render, Railway, Fly.io, or another Node host
+- **Frontend** (`frontend/`) on Vercel
+- **Flask Backend** (`backend/`) on Render
+- **Signaling Server** (`server/`) on Render
 
-## Why not full Vercel?
+## Quick Deploy with Render
 
-The frontend is a great fit for Vercel.
+This repository includes a [`render.yaml`](render.yaml) file for one-click deployment.
 
-The Flask backend can run on Vercel as a single Python function, but this app also depends on:
-
-- generated audio files
-- heavier Python dependencies
-- longer-running interview/report flows
-- a dedicated Socket.IO signaling server for live HR observation and WebRTC coordination
-
-For the signaling server in particular, this repo is built around a standalone Express + Socket.IO process. Keep that on a normal Node host.
-
-## 1. Push the repo to GitHub
+### Step 1: Push to GitHub
 
 ```bash
 git add .
-git commit -m "Prepare production deployment"
+git commit -m "Prepare production deployment with TURN server support"
 git push origin main
 ```
 
-## 2. Deploy the frontend to Vercel
+### Step 2: Deploy to Render
 
-In Vercel:
+1. Go to [Render Dashboard](https://dashboard.render.com/)
+2. Click **New +** → **Blueprint**
+3. Connect your GitHub repository
+4. Render will auto-detect the `render.yaml` configuration
+5. Fill in the required environment variables (marked as "sync: false")
+6. Click **Apply** to deploy both services
 
-1. Import the GitHub repository.
-2. Set the Root Directory to `frontend`.
-3. Framework preset: `Vite`.
-4. Build command: `npm run build`
-5. Output directory: `dist`
+### Step 3: Configure Environment Variables
 
-The file [frontend/vercel.json](/Users/sathwik/Desktop/Ai-Video-Interviewer%2012.35.08%E2%80%AFPM/frontend/vercel.json) already rewrites SPA routes to `index.html`.
+After deploying, set these variables in the Render dashboard:
 
-Set these Vercel environment variables from [frontend/.env.production.example](/Users/sathwik/Desktop/Ai-Video-Interviewer%2012.35.08%E2%80%AFPM/frontend/.env.production.example):
+#### Signaling Server (`ai-interviewer-signaling`)
 
-- `VITE_BACKEND_URL`
-- `VITE_SIGNALING_URL`
-- `VITE_PUBLIC_APP_URL`
-- all `VITE_FIREBASE_*` values
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `CLIENT_ORIGIN` | Your frontend URL | `https://your-app.vercel.app` |
+| `TURN_USERNAME` | TURN username from Metered | `6695d7efa747633e5deeace9` |
+| `TURN_CREDENTIAL` | TURN credential from Metered | `BSEyIggm5WJlQi4O` |
+| `TURN_DOMAIN` | Your Metered domain | `sathwik-interviewer.metered.ca` |
 
-## 3. Deploy the Flask backend
+#### Flask Backend (`ai-interviewer-backend`)
 
-Recommended hosts:
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `GEMINI_API_KEY` | Google Gemini API key | `AIzaSy...` |
+| `FIREBASE_SERVICE_ACCOUNT_PATH` | Path to Firebase service account | `./serviceAccount.json` |
+| `PUBLIC_URL` | Your frontend URL | `https://your-app.vercel.app` |
+| `RESEND_API_KEY` | Resend email API key | `re_...` |
+| `FROM_EMAIL` | Verified sender email | `AI Interviewer <noreply@yourdomain.com>` |
+| `REPLY_TO_EMAIL` | Reply-to email | `support@yourdomain.com` |
 
-- Render
-- Railway
-- Fly.io
+### Step 4: Deploy Frontend to Vercel
 
-Use `backend/` as the service root.
+1. Go to [Vercel](https://vercel.com/)
+2. Import your GitHub repository
+3. Set Root Directory to `frontend`
+4. Framework preset: **Vite**
+5. Set these environment variables:
 
-Install command:
-
-```bash
-pip install -r requirements.txt
+```env
+VITE_BACKEND_URL=https://ai-interviewer-backend.onrender.com
+VITE_SIGNALING_URL=https://ai-interviewer-signaling.onrender.com
+VITE_PUBLIC_APP_URL=https://your-app.vercel.app
+# Plus all VITE_FIREBASE_* variables
 ```
 
-Start command:
+6. Deploy!
 
-```bash
-gunicorn --bind 0.0.0.0:$PORT app:app
+---
+
+## Manual Deployment (Alternative)
+
+If you prefer not to use Render's Blueprint:
+
+### Deploy Signaling Server to Render
+
+1. Create a new **Web Service** on Render
+2. Set Root Directory to `server/`
+3. Build Command: `npm install`
+4. Start Command: `node server.js`
+5. Add environment variables (see table above)
+
+### Deploy Flask Backend to Render
+
+1. Create a new **Web Service** on Render
+2. Set Root Directory to `backend/`
+3. Build Command: `pip install -r requirements.txt`
+4. Start Command: `gunicorn --bind 0.0.0.0:$PORT app:app`
+5. Add environment variables (see table above)
+
+---
+
+## TURN Server Setup
+
+The app uses Metered.ca for TURN servers to enable global WebRTC connectivity.
+
+### Configuration (Static Credentials)
+
+1. Sign up at [Metered.ca](https://www.metered.ca/)
+2. Get your static credentials from [Dashboard → TURN Servers](https://dashboard.metered.ca/turn-servers)
+3. Set these environment variables in Render:
+   - `TURN_USERNAME` - Your TURN username
+   - `TURN_CREDENTIAL` - Your TURN password
+   - `TURN_DOMAIN` - Your Metered domain (e.g., `sathwik-interviewer.metered.ca`)
+
+See [TURN_SETUP.md](TURN_SETUP.md) for detailed instructions.
+
+---
+
+## Post-Deployment Checklist
+
+1. ✅ Both Render services show "Live" status
+2. ✅ Vercel frontend builds successfully
+3. ✅ Health check passes: `https://your-signaling.onrender.com/health`
+4. ✅ TURN credentials endpoint works: `https://your-signaling.onrender.com/api/turn-credentials`
+5. ✅ Frontend can connect to signaling server
+6. ✅ WebRTC video works across different networks
+
+---
+
+## Troubleshooting
+
+### WebRTC only works on same network
+
+- Verify TURN credentials are configured correctly
+- Check browser console for `[TURN]` log messages
+- Visit `chrome://webrtc-internals/` to verify relay candidates
+
+### "TURN credentials not configured" error
+
+- Ensure `TURN_USERNAME`, `TURN_CREDENTIAL`, and `TURN_DOMAIN` are set in Render dashboard
+- Check for typos or extra spaces in the values
+
+### Frontend can't connect to signaling server
+
+- Verify `VITE_SIGNALING_URL` points to your deployed signaling server
+- Check CORS settings (should allow your frontend origin)
+
+### Build fails on Render
+
+- Check Node.js version compatibility (server uses Node 18+)
+- Ensure all dependencies are in `package.json`
+
+---
+
+## Architecture
+
 ```
-
-Environment variables:
-
-- `GEMINI_API_KEY`
-- `FIREBASE_SERVICE_ACCOUNT_PATH`
-- `PUBLIC_URL`
-- `RESEND_API_KEY`
-- `FROM_EMAIL`
-- `REPLY_TO_EMAIL`
-- any other production secrets you need
-
-Important:
-
-- `PUBLIC_URL` should be your deployed frontend URL, for example `https://your-app.vercel.app`
-- the Firebase service account JSON must be provided securely on the host
-
-## 4. Deploy the signaling server
-
-Use `server/` as the service root.
-
-Install command:
-
-```bash
-npm install
+┌─────────────────┐     WebSocket (Socket.IO)     ┌──────────────────┐
+│   React Frontend│◄─────────────────────────────►│  Signaling Server│
+│   (Vercel)      │     WebRTC Signaling          │  (Render/Node)   │
+└────────┬────────┘                               └────────┬─────────┘
+         │                                                │
+         │  GET /api/turn-credentials                     │
+         │◄───────────────────────────────────────────────│
+         │                                                │
+         │                                    ┌───────────▼─────────┐
+         │                                    │   Metered.ca TURN   │
+         │                                    │   (Global Servers)  │
+         │                                    └─────────────────────┘
+         │
+         │  REST API calls
+         ▼
+┌──────────────────┐
+│  Flask Backend   │
+│  (Render/Python) │
+└──────────────────┘
 ```
-
-Start command:
-
-```bash
-node server.js
-```
-
-Environment variables:
-
-- `PORT`
-- `CLIENT_ORIGIN`
-
-Set `CLIENT_ORIGIN` to your Vercel frontend URL, for example:
-
-```bash
-CLIENT_ORIGIN=https://your-app.vercel.app
-```
-
-## 5. Update production frontend variables
-
-Once backend and signaling are deployed, set these in Vercel:
-
-```bash
-VITE_BACKEND_URL=https://your-backend-service.example.com
-VITE_SIGNALING_URL=https://your-signaling-service.example.com
-VITE_PUBLIC_APP_URL=https://your-vercel-app.vercel.app
-```
-
-Then redeploy the frontend.
-
-## 6. Firebase and email checklist
-
-- Enable Firebase Email/Password auth
-- Ensure Firestore rules/indexes allow the app flows you need
-- Keep `backend/serviceAccount.json` out of git
-- Use a valid Resend API key
-- Verify the sender domain/address in Resend if you want direct external delivery
-
-## 7. Final production checks
-
-Test these flows after deploy:
-
-1. Sign up / login
-2. Create interview link
-3. Candidate joins interview
-4. HR observer can see live candidate video
-5. Interview completes
-6. Report appears in HR dashboard, HR reports, and campaign sessions

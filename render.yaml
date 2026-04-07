@@ -1,0 +1,76 @@
+# Render.com Deployment Configuration
+# This file defines the services needed to deploy the AI Video Interviewer app.
+# Deploy by connecting this repo to Render: https://render.com/docs/github
+
+services:
+  # ─────────────────────────────────────────────────────────────────────
+  # Signaling Server (Node.js + Express + Socket.IO)
+  # Handles WebRTC signaling and TURN credential distribution
+  # ─────────────────────────────────────────────────────────────────────
+  - type: web
+    name: ai-interviewer-signaling
+    env: node
+    region: oregon  # Choose region closest to your users (oregon, frankfurt, singapore, etc.)
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000  # Render assigns ports dynamically
+      - key: CLIENT_ORIGIN
+        value: https://interviewer-ai-i14a.onrender.com
+      # Static TURN credentials from Metered.ca dashboard
+      - key: TURN_USERNAME
+        value: 6695d7efa747633e5deeace9
+      - key: TURN_CREDENTIAL
+        value: BSEyIggm5WJlQi4O
+      - key: TURN_DOMAIN
+        value: sathwik-interviewer.metered.ca
+    healthCheckPath: /health
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Flask Backend (Python + Gemini AI + Firebase)
+  # Handles AI interview logic, question generation, and scoring
+  # ─────────────────────────────────────────────────────────────────────
+  - type: web
+    name: ai-interviewer-backend
+    env: python
+    region: oregon  # Should match signaling server region for low latency
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: GEMINI_API_KEY
+        sync: false  # Your Google Gemini API key
+      - key: SARVAM_API_KEY
+        sync: false  # Your Sarvam AI API key (if using Indian languages)
+      - key: FIREBASE_SERVICE_ACCOUNT_PATH
+        value: ./serviceAccount.json
+      - key: PUBLIC_URL
+        sync: false  # Your frontend URL (e.g., https://your-app.vercel.app)
+      - key: RESEND_API_KEY
+        sync: false  # Your Resend email API key
+      - key: FROM_EMAIL
+        sync: false  # Verified sender email
+      - key: REPLY_TO_EMAIL
+        sync: false  # Reply-to email address
+
+# ─────────────────────────────────────────────────────────────────────
+# Deployment Notes:
+# ─────────────────────────────────────────────────────────────────────
+# 1. Push this repo to GitHub
+# 2. Connect to Render: https://render.com/dashboard
+# 3. Import the repo - Render will auto-detect render.yaml
+# 4. Fill in the sync:false environment variables in Render dashboard
+# 5. Deploy both services
+# 6. Update your frontend .env with the deployed backend/signaling URLs
+#
+# Frontend should be deployed separately on Vercel (recommended)
+# See DEPLOYMENT.md for detailed instructions
+# ─────────────────────────────────────────────────────────────────────
