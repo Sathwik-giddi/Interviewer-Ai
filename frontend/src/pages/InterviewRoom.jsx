@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { io } from 'socket.io-client'
 import CodeEditor from '../components/CodeEditor'
@@ -20,10 +20,15 @@ const ICE     = { iceServers: [
   { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
 ] }
 
+function createDraftSessionId() {
+  return `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
 export default function InterviewRoom() {
   const { roomId } = useParams()
   const { currentUser } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const toast = useToast()
 
   // Guest mode — works without Firebase auth
@@ -33,6 +38,9 @@ export default function InterviewRoom() {
   // ── State ──
   const [phase, setPhase]               = useState('setup')
   const [candidateName, setCandidateName] = useState('')
+  const [candidateEmail, setCandidateEmail] = useState(currentUser?.email || '')
+  const [candidatePhone, setCandidatePhone] = useState('')
+  const [candidateCustomId, setCandidateCustomId] = useState('')
   const [jobTitle, setJobTitle]           = useState('')
   const [jobDescription, setJobDescription] = useState('')
   const [resumeFile, setResumeFile]       = useState(null)
@@ -46,7 +54,7 @@ export default function InterviewRoom() {
   const [transcribing, setTranscribing]   = useState(false)
   const [submitting, setSubmitting]       = useState(false)
   const [aiSpeaking, setAiSpeaking]       = useState(false)
-  const [sessionId, setSessionId]         = useState(null)
+  const [sessionId, setSessionId]         = useState(() => createDraftSessionId())
   const [matchScore, setMatchScore]       = useState(null)
   const [parsedResume, setParsedResume]   = useState(null)
   const [parsingResume, setParsingResume] = useState(false)
@@ -55,6 +63,14 @@ export default function InterviewRoom() {
   const [observerRoomId, setObserverRoomId] = useState(roomId)
   const [campaignId, setCampaignId]       = useState('')
   const [sessionStartedAt, setSessionStartedAt] = useState('')
+  const [candidateId, setCandidateId] = useState('')
+  const [linkToken, setLinkToken] = useState('')
+  const [linkId, setLinkId] = useState('')
+  const [prefillInfo, setPrefillInfo] = useState(null)
+  const [prefillChecked, setPrefillChecked] = useState(false)
+  const [resumeDraft, setResumeDraft] = useState(null)
+  const [questionDurations, setQuestionDurations] = useState({})
+  const [pagesVisited, setPagesVisited] = useState([])
 
   // Proctoring
   const [procWarnings, setProcWarnings]   = useState([])
@@ -77,9 +93,33 @@ export default function InterviewRoom() {
   const voiceLangRef = useRef(voiceLang)
   const voiceGenderRef = useRef(voiceGender)
   const answersRef = useRef(answers)
+  const sessionIdRef = useRef(sessionId)
+  const candidateIdRef = useRef(candidateId)
+  const phaseRef = useRef(phase)
+  const qIndexRef = useRef(qIndex)
+  const questionDurationsRef = useRef(questionDurations)
+  const currentQuestionStartedAtRef = useRef(null)
+  const actionQueueRef = useRef([])
+  const actionFlushTimerRef = useRef(null)
+  const progressFlushTimerRef = useRef(null)
+  const fieldSnapshotRef = useRef({
+    candidateName: '',
+    candidateEmail: currentUser?.email || '',
+    candidatePhone: '',
+    candidateCustomId: '',
+    jobTitle: '',
+    jobDescription: '',
+  })
+  const answerDraftRef = useRef('')
+  const codeDraftRef = useRef('')
   useEffect(() => { voiceLangRef.current = voiceLang }, [voiceLang])
   useEffect(() => { voiceGenderRef.current = voiceGender }, [voiceGender])
   useEffect(() => { answersRef.current = answers }, [answers])
+  useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
+  useEffect(() => { candidateIdRef.current = candidateId }, [candidateId])
+  useEffect(() => { phaseRef.current = phase }, [phase])
+  useEffect(() => { qIndexRef.current = qIndex }, [qIndex])
+  useEffect(() => { questionDurationsRef.current = questionDurations }, [questionDurations])
 
   // HR Intervention
   const [hrSpeakRequest, setHrSpeakRequest] = useState(false)
@@ -109,10 +149,174 @@ export default function InterviewRoom() {
   const peerRef          = useRef(null)
   const timerRef         = useRef(null)
 
+  function getCurrentPageUrl() {
+    return typeof window !== 'undefined' ? window.location.href : `/interview/${roomId}`
+  }
+
+  function addPageVisit(pageUrl = getCurrentPageUrl()) {
+    setPagesVisited(prev => prev.includes(pageUrl) ? prev : [...prev, pageUrl])
+  }
+
+  function enqueueAction(action) {
+    const item = {
+      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      candidate_id: candidateIdRef.current || candidateId || userId,
+      session_id: sessionIdRef.current || sessionId,
+      timestamp: new Date().toISOString(),
+      page_url: getCurrentPageUrl(),
+      ...action,
+    }
+    if (!item.session_id) return
+    actionQueueRef.current.push(item)
+    if (actionFlushTimerRef.current) clearTimeout(actionFlushTimerRef.current)
+    actionFlushTimerRef.current = setTimeout(() => flushActions(), 1200)
+  }
+
+  async function flushActions() {
+    if (!actionQueueRef.current.length) return
+    const batch = [...actionQueueRef.current]
+    actionQueueRef.current = []
+    try {
+      await fetch(apiUrl('/api/candidate/actions'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actions: batch }),
+        keepalive: true,
+      })
+    } catch {
+      actionQueueRef.current = [...batch, ...actionQueueRef.current]
+    }
+  }
+
+  function buildProgressPayload(statusOverride = '') {
+    return {
+      session_id: sessionIdRef.current || sessionId,
+      candidate_id: candidateIdRef.current || candidateId || userId,
+      room_id: roomId,
+      campaign_id: campaignId,
+      link_id: linkId,
+      observer_room_id: observerRoomId,
+      status: statusOverride || (phaseRef.current === 'ended' ? 'completed' : phaseRef.current === 'interview' ? 'in-progress' : 'draft'),
+      fields: {
+        candidateName: candidateName.trim(),
+        candidateEmail: candidateEmail.trim(),
+        candidatePhone: candidatePhone.trim(),
+        candidateCustomId: candidateCustomId.trim(),
+        jobTitle: jobTitle.trim(),
+        jobDescription: jobDescription.trim(),
+      },
+      questions,
+      answers,
+      current_index: qIndex,
+      match_score: matchScore,
+      parsed_resume: parsedResume,
+      question_durations: questionDurationsRef.current,
+      pages_visited: pagesVisited,
+      duration: timer,
+      violations: procHistory.map(h => ({ type: h.type, timestamp: h.ts, details: h.msg })),
+      started_at: sessionStartedAt || new Date().toISOString(),
+      evaluation,
+    }
+  }
+
+  function scheduleProgressPersist(statusOverride = '') {
+    if (!prefillChecked) return
+    if (progressFlushTimerRef.current) clearTimeout(progressFlushTimerRef.current)
+    progressFlushTimerRef.current = setTimeout(() => persistProgress(statusOverride), 1500)
+  }
+
+  async function persistProgress(statusOverride = '') {
+    const payload = buildProgressPayload(statusOverride)
+    if (!payload.session_id) return
+    try {
+      const res = await fetch(apiUrl('/api/candidate/progress'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      })
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}))
+        if (data.candidateId && !candidateIdRef.current) setCandidateId(data.candidateId)
+      }
+    } catch {}
+  }
+
+  function setTrackedField(fieldName, nextValue, setter) {
+    const oldValue = fieldSnapshotRef.current[fieldName] ?? ''
+    fieldSnapshotRef.current[fieldName] = nextValue
+    setter(nextValue)
+    if (oldValue !== nextValue) {
+      enqueueAction({
+        action_type: 'input_change',
+        field_name: fieldName,
+        old_value: oldValue,
+        new_value: nextValue,
+        message: `Changed ${fieldName} at ${new Date().toLocaleTimeString()}`,
+      })
+    }
+  }
+
+  function markFieldBlur(fieldName, value) {
+    enqueueAction({
+      action_type: 'blur',
+      field_name: fieldName,
+      new_value: value,
+      message: `Reviewed ${fieldName} at ${new Date().toLocaleTimeString()}`,
+    })
+  }
+
+  function captureCurrentQuestionDuration() {
+    const startedAt = currentQuestionStartedAtRef.current
+    const currentQuestion = questions[qIndexRef.current]
+    if (!startedAt || !currentQuestion) return
+    const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
+    const key = currentQuestion.id || `q-${qIndexRef.current + 1}`
+    setQuestionDurations(prev => {
+      const updated = { ...prev, [key]: (prev[key] || 0) + elapsedSeconds }
+      questionDurationsRef.current = updated
+      return updated
+    })
+  }
+
+  function resumePreviousDraft(draft) {
+    if (!draft) return
+    setSessionId(draft.sessionId || createDraftSessionId())
+    setCandidateId(draft.candidateId || candidateIdRef.current || '')
+    setObserverRoomId(draft.observerRoomId || roomId)
+    setCampaignId(draft.campaignId || '')
+    setQuestions(draft.questions || [])
+    setAnswers(draft.answers || [])
+    setQIndex(Math.min(draft.currentIndex || 0, Math.max((draft.questions || []).length - 1, 0)))
+    setMatchScore(draft.matchScore ?? null)
+    setParsedResume(draft.parsedResume || null)
+    setTimer(draft.duration || 0)
+    setQuestionDurations(draft.questionDurations || {})
+    setPagesVisited(draft.pagesVisited || [])
+    setSessionStartedAt(draft.startedAt || new Date().toISOString())
+    setResumeDraft(draft)
+    setEvaluation(draft.evaluation || null)
+    setPhase((draft.questions || []).length ? 'interview' : 'setup')
+    enqueueAction({
+      action_type: 'navigation',
+      field_name: 'resume_draft',
+      message: `Resumed previous session at ${new Date().toLocaleTimeString()}`,
+      metadata: { restoredQuestionIndex: draft.currentIndex || 0 },
+    })
+    if ((draft.questions || []).length) {
+      setTimeout(() => speakQuestion(Math.min(draft.currentIndex || 0, Math.max((draft.questions || []).length - 1, 0)), draft.questions || []), 400)
+    }
+  }
+
   /* ═══════════════════ CAMERA ═══════════════════ */
   useEffect(() => {
     startCamera()
     return () => {
+      if (progressFlushTimerRef.current) clearTimeout(progressFlushTimerRef.current)
+      if (actionFlushTimerRef.current) clearTimeout(actionFlushTimerRef.current)
+      captureCurrentQuestionDuration()
+      flushActions()
+      persistProgress(phaseRef.current === 'ended' ? 'completed' : phaseRef.current === 'interview' ? 'in-progress' : 'draft')
       localStreamRef.current?.getTracks().forEach(t => t.stop())
       clearInterval(faceIntervalRef.current)
       clearInterval(timerRef.current)
@@ -132,6 +336,134 @@ export default function InterviewRoom() {
       socketRef.current?.disconnect()
     }
   }, [])
+
+  useEffect(() => {
+    if (!currentUser?.email || candidateEmail) return
+    setCandidateEmail(currentUser.email)
+    fieldSnapshotRef.current.candidateEmail = currentUser.email
+  }, [currentUser?.email])
+
+  useEffect(() => {
+    const token = new URLSearchParams(location.search).get('token') || ''
+    setLinkToken(token)
+  }, [location.search])
+
+  useEffect(() => {
+    addPageVisit()
+    enqueueAction({
+      action_type: 'view',
+      field_name: 'assessment',
+      message: `Viewed assessment page at ${new Date().toLocaleTimeString()}`,
+    })
+  }, [])
+
+  useEffect(() => {
+    async function loadPrefill() {
+      if (!linkToken) {
+        setPrefillChecked(true)
+        return
+      }
+      try {
+        const res = await fetch(apiUrl(`/api/candidate/lookup?token=${encodeURIComponent(linkToken)}`))
+        if (res.status === 404) {
+          setPrefillChecked(true)
+          return
+        }
+        if (!res.ok) throw new Error('Failed to load previous candidate data')
+        const data = await res.json()
+        const fields = data.fields || {}
+        setCandidateId(data.candidateId || '')
+        setCandidateName(fields.candidateName || '')
+        setCandidateEmail(fields.candidateEmail || currentUser?.email || '')
+        setCandidatePhone(fields.candidatePhone || '')
+        setCandidateCustomId(fields.candidateCustomId || '')
+        setJobTitle(fields.jobTitle || data.link?.jobTitle || '')
+        setJobDescription(fields.jobDescription || '')
+        setLinkId(data.link?.linkId || '')
+        setCampaignId(data.link?.campaignId || '')
+        setPrefillInfo({
+          message: data.message,
+          lastUpdatedAt: data.lastUpdatedAt,
+        })
+        fieldSnapshotRef.current = {
+          candidateName: fields.candidateName || '',
+          candidateEmail: fields.candidateEmail || currentUser?.email || '',
+          candidatePhone: fields.candidatePhone || '',
+          candidateCustomId: fields.candidateCustomId || '',
+          jobTitle: fields.jobTitle || data.link?.jobTitle || '',
+          jobDescription: fields.jobDescription || '',
+        }
+        if (data.draft) {
+          setResumeDraft(data.draft)
+          setSessionId(data.draft.sessionId || createDraftSessionId())
+          setQuestionDurations(data.draft.questionDurations || {})
+          setPagesVisited(data.draft.pagesVisited || [])
+          setSessionStartedAt(data.draft.startedAt || '')
+        }
+      } catch (err) {
+        toast.warning(err.message || 'Could not load previous submission data.')
+      } finally {
+        setPrefillChecked(true)
+      }
+    }
+    loadPrefill()
+  }, [linkToken])
+
+  useEffect(() => {
+    const flushPending = () => {
+      captureCurrentQuestionDuration()
+      flushActions()
+      persistProgress(phaseRef.current === 'ended' ? 'completed' : phaseRef.current === 'interview' ? 'in-progress' : 'draft')
+    }
+    window.addEventListener('beforeunload', flushPending)
+    return () => window.removeEventListener('beforeunload', flushPending)
+  }, [])
+
+  useEffect(() => {
+    if (phase !== 'interview' || !questions[qIndex]) {
+      currentQuestionStartedAtRef.current = null
+      return
+    }
+    currentQuestionStartedAtRef.current = Date.now()
+    enqueueAction({
+      action_type: 'navigation',
+      field_name: `question_${qIndex + 1}`,
+      message: `Opened question #${qIndex + 1} at ${new Date().toLocaleTimeString()}`,
+    })
+  }, [phase, qIndex, questions.length])
+
+  useEffect(() => {
+    if (!prefillChecked) return
+    scheduleProgressPersist()
+  }, [
+    prefillChecked,
+    candidateName,
+    candidateEmail,
+    candidatePhone,
+    candidateCustomId,
+    jobTitle,
+    jobDescription,
+    qIndex,
+    answers,
+    questions,
+    matchScore,
+    parsedResume,
+    phase,
+    questionDurations,
+    pagesVisited,
+  ])
+
+  useEffect(() => {
+    addPageVisit(`${getCurrentPageUrl()}::${phase}`)
+  }, [phase])
+
+  useEffect(() => {
+    if (phase !== 'interview') return undefined
+    const interval = setInterval(() => {
+      persistProgress('in-progress')
+    }, 15000)
+    return () => clearInterval(interval)
+  }, [phase, roomId])
 
   async function startCamera() {
     try {
@@ -294,6 +626,42 @@ export default function InterviewRoom() {
     }, 500)
     return () => clearTimeout(debounce)
   }, [textAnswer, codeValue, phase, qIndex])
+
+  useEffect(() => {
+    if (phase !== 'interview') return
+    const nextValue = textAnswer.trim()
+    const previousValue = answerDraftRef.current
+    if (nextValue === previousValue) return
+    const timeout = setTimeout(() => {
+      enqueueAction({
+        action_type: 'input_change',
+        field_name: `answer_text_${qIndex + 1}`,
+        old_value: previousValue,
+        new_value: nextValue,
+        message: `Edited text answer for question #${qIndex + 1} at ${new Date().toLocaleTimeString()}`,
+      })
+      answerDraftRef.current = nextValue
+    }, 700)
+    return () => clearTimeout(timeout)
+  }, [textAnswer, phase, qIndex])
+
+  useEffect(() => {
+    if (phase !== 'interview') return
+    const nextValue = codeValue.trim()
+    const previousValue = codeDraftRef.current
+    if (nextValue === previousValue) return
+    const timeout = setTimeout(() => {
+      enqueueAction({
+        action_type: 'input_change',
+        field_name: `answer_code_${qIndex + 1}`,
+        old_value: previousValue,
+        new_value: nextValue,
+        message: `Edited code answer for question #${qIndex + 1} at ${new Date().toLocaleTimeString()}`,
+      })
+      codeDraftRef.current = nextValue
+    }, 900)
+    return () => clearTimeout(timeout)
+  }, [codeValue, phase, qIndex])
 
   /* ═══════════════════ FACE-API PROCTORING + EXPRESSIONS ═══════════════════ */
   useEffect(() => {
@@ -502,7 +870,13 @@ export default function InterviewRoom() {
   async function handleStart(e) {
     e.preventDefault()
     if (!candidateName.trim()) { toast.error('Please enter your name.'); return }
+    if (!candidateEmail.trim()) { toast.error('Please enter your email.'); return }
     setPhase('loading')
+    enqueueAction({
+      action_type: 'submit',
+      field_name: 'interview_start',
+      message: `Clicked Start Interview at ${new Date().toLocaleTimeString()}`,
+    })
 
     let score = 50
     if (resumeFile) {
@@ -520,11 +894,11 @@ export default function InterviewRoom() {
       } catch {}
     }
 
-    const newSessionId = `sess-${Date.now()}-${Math.random().toString(36).slice(2,6)}`
-    const startedAt = new Date().toISOString()
+    const activeSessionId = sessionId || createDraftSessionId()
+    const startedAt = sessionStartedAt || new Date().toISOString()
     let resolvedCampaignId = campaignId
 
-    setSessionId(newSessionId)
+    setSessionId(activeSessionId)
     setSessionStartedAt(startedAt)
 
     try {
@@ -532,18 +906,27 @@ export default function InterviewRoom() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          session_id: newSessionId,
+          session_id: activeSessionId,
           room_id: roomId,
-          candidate_id: userId,
-          candidate_email: currentUser?.email || '',
+          candidate_id: candidateId || userId,
+          candidate_email: candidateEmail.trim(),
           candidate_name: candidateName.trim(),
+          candidate_phone: candidatePhone.trim(),
+          candidate_custom_id: candidateCustomId.trim(),
           job_title: jobTitle.trim(),
+          job_description: jobDescription.trim(),
           match_score: score,
           started_at: startedAt,
+          link_token: linkToken,
+          link_id: linkId,
+          parsed_resume: parsedResume,
+          pages_visited: pagesVisited,
+          question_durations: questionDurationsRef.current,
         }),
       })
       if (startRes.ok) {
         const startData = await startRes.json()
+        if (startData.candidateId) setCandidateId(startData.candidateId)
         if (startData.campaignId) {
           resolvedCampaignId = startData.campaignId
           setCampaignId(startData.campaignId)
@@ -567,6 +950,8 @@ export default function InterviewRoom() {
 
     if (!selectedQs.length) selectedQs = getDefaultQuestions()
     setQuestions(selectedQs)
+    currentQuestionStartedAtRef.current = Date.now()
+    await persistProgress('in-progress')
 
     await speakQuestion(0, selectedQs)
     setPhase('interview')
@@ -665,6 +1050,7 @@ export default function InterviewRoom() {
     if (!q) return
     setSubmitting(true)
     stopSpeaking()
+    captureCurrentQuestionDuration()
 
     const answerText = q.type === 'code' ? codeValue : textAnswer
     const newAnswer = { questionId: q.id || qIndex, question: q.text, answer: answerText, type: q.type || 'text' }
@@ -676,9 +1062,22 @@ export default function InterviewRoom() {
     setTimeout(() => dialogueEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
 
     setTextAnswer(''); setCodeValue('')
+    answerDraftRef.current = ''
+    codeDraftRef.current = ''
 
     // Notify HR
     socketRef.current?.emit('answer-submitted', { roomId, qIndex, answer: answerText.substring(0, 200) })
+    enqueueAction({
+      action_type: 'submit',
+      field_name: `question_${qIndex + 1}`,
+      old_value: '',
+      new_value: answerText,
+      message: `Submitted answer for question #${qIndex + 1} at ${new Date().toLocaleTimeString()}`,
+      metadata: {
+        question: q.text,
+        elapsedSeconds: questionDurationsRef.current[q.id || `q-${qIndex + 1}`] || 0,
+      },
+    })
 
     // Evaluate in background
     fetch(apiUrl('/api/evaluate-answer-ai'), {
@@ -692,6 +1091,8 @@ export default function InterviewRoom() {
       await endInterview(updated)
     } else {
       setQIndex(nextIdx)
+      currentQuestionStartedAtRef.current = Date.now()
+      await persistProgress('in-progress')
       await speakQuestion(nextIdx)
       // Auto-start recording for text questions (voice-first)
       if (questions[nextIdx]?.type !== 'code') {
@@ -704,7 +1105,17 @@ export default function InterviewRoom() {
   async function endInterview(finalAnswers) {
     setPhase('ending')
     clearInterval(timerRef.current)
+    captureCurrentQuestionDuration()
     socketRef.current?.emit('interview-ended', { roomId, answers: finalAnswers.length })
+    enqueueAction({
+      action_type: 'submit',
+      field_name: 'interview_complete',
+      message: `Completed assessment at ${new Date().toLocaleTimeString()}`,
+      metadata: {
+        answersCount: finalAnswers.length,
+        durationSeconds: timer,
+      },
+    })
 
     try {
       const res = await fetch(apiUrl('/api/generate-evaluation'), {
@@ -714,8 +1125,10 @@ export default function InterviewRoom() {
           session_id: sessionId,
           room_id: roomId,
           campaign_id: campaignId,
-          candidate_id: userId,
-          candidate_email: currentUser?.email || '',
+          candidate_id: candidateId || userId,
+          candidate_email: candidateEmail.trim(),
+          candidate_phone: candidatePhone.trim(),
+          candidate_custom_id: candidateCustomId.trim(),
           match_score: matchScore,
           started_at: sessionStartedAt,
           answers: finalAnswers,
@@ -723,11 +1136,21 @@ export default function InterviewRoom() {
           duration: timer,
           candidateName,
           jobTitle,
+          jobDescription,
+          questions,
+          question_durations: questionDurationsRef.current,
+          pages_visited: pagesVisited,
+          parsed_resume: parsedResume,
+          link_token: linkToken,
+          link_id: linkId,
+          current_index: questions.length,
         }),
       })
       if (res.ok) setEvaluation(await res.json())
     } catch {}
 
+    await persistProgress('completed')
+    await flushActions()
     toast.success('Interview complete!')
     setPhase('ended')
   }
@@ -758,7 +1181,8 @@ export default function InterviewRoom() {
   }
 
   function copyLink() {
-    navigator.clipboard.writeText(interviewUrl(roomId)).then(() => toast.info('Link copied!')).catch(() => {})
+    const link = typeof window !== 'undefined' ? window.location.href : interviewUrl(roomId)
+    navigator.clipboard.writeText(link).then(() => toast.info('Link copied!')).catch(() => {})
   }
 
   /* ═══════════════════ RENDER ═══════════════════ */
@@ -957,10 +1381,100 @@ export default function InterviewRoom() {
           <div style={S.setupCard} className="card">
             <h2 style={S.setupTitle}>AI INTERVIEW SESSION</h2>
             <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '24px' }}>The AI interviewer will speak 5 questions aloud. Answer by voice recording or typing. Code questions include an editor.</p>
+            {prefillInfo && (
+              <div style={{ marginBottom: '18px', padding: '14px 16px', background: 'var(--primary-light)', border: '1px solid rgba(119, 91, 246, 0.24)' }}>
+                <p style={{ fontSize: '13px', color: 'var(--primary)', fontWeight: 700, marginBottom: '4px' }}>PREVIOUS ENTRY FOUND</p>
+                <p style={{ fontSize: '13px', color: 'var(--text)', lineHeight: '1.6', margin: 0 }}>
+                  {prefillInfo.message}
+                </p>
+                {resumeDraft?.questions?.length > 0 && resumeDraft.status !== 'completed' && (
+                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '12px' }}>
+                    <button type="button" className="btn btn-primary" onClick={() => resumePreviousDraft(resumeDraft)}>
+                      Continue Previous Session
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => {
+                        setResumeDraft(null)
+                        setSessionId(createDraftSessionId())
+                        setQuestions([])
+                        setAnswers([])
+                        setQIndex(0)
+                        setTimer(0)
+                        setQuestionDurations({})
+                        enqueueAction({
+                          action_type: 'navigation',
+                          field_name: 'restart_session',
+                          message: `Started a fresh session at ${new Date().toLocaleTimeString()}`,
+                        })
+                      }}
+                    >
+                      Start Fresh
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             <form onSubmit={handleStart}>
-              <div className="form-group"><label>Your Name *</label><input value={candidateName} onChange={e => setCandidateName(e.target.value)} placeholder="John Doe" required /></div>
-              <div className="form-group"><label>Job Title / Role</label><input value={jobTitle} onChange={e => setJobTitle(e.target.value)} placeholder="e.g. Frontend Developer" /></div>
-              <div className="form-group"><label>Job Description (optional)</label><textarea value={jobDescription} onChange={e => setJobDescription(e.target.value)} placeholder="Paste JD for targeted questions…" style={{ minHeight: '80px' }} /></div>
+              <div className="form-group">
+                <label>Your Name *</label>
+                <input
+                  value={candidateName}
+                  onChange={e => setTrackedField('candidateName', e.target.value, setCandidateName)}
+                  onBlur={e => markFieldBlur('candidateName', e.target.value)}
+                  placeholder="John Doe"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Email *</label>
+                <input
+                  type="email"
+                  value={candidateEmail}
+                  onChange={e => setTrackedField('candidateEmail', e.target.value, setCandidateEmail)}
+                  onBlur={e => markFieldBlur('candidateEmail', e.target.value)}
+                  placeholder="john@example.com"
+                  required
+                />
+              </div>
+              <div className="form-group">
+                <label>Phone</label>
+                <input
+                  value={candidatePhone}
+                  onChange={e => setTrackedField('candidatePhone', e.target.value, setCandidatePhone)}
+                  onBlur={e => markFieldBlur('candidatePhone', e.target.value)}
+                  placeholder="+91 98765 43210"
+                />
+              </div>
+              <div className="form-group">
+                <label>Candidate ID (optional)</label>
+                <input
+                  value={candidateCustomId}
+                  onChange={e => setTrackedField('candidateCustomId', e.target.value, setCandidateCustomId)}
+                  onBlur={e => markFieldBlur('candidateCustomId', e.target.value)}
+                  placeholder="EMP-2026-001"
+                />
+              </div>
+              <div className="form-group">
+                <label>Job Title / Role</label>
+                <input
+                  value={jobTitle}
+                  onChange={e => setTrackedField('jobTitle', e.target.value, setJobTitle)}
+                  onBlur={e => markFieldBlur('jobTitle', e.target.value)}
+                  placeholder="e.g. Frontend Developer"
+                />
+              </div>
+              <div className="form-group">
+                <label>Job Description (optional)</label>
+                <textarea
+                  value={jobDescription}
+                  onChange={e => setTrackedField('jobDescription', e.target.value, setJobDescription)}
+                  onBlur={e => markFieldBlur('jobDescription', e.target.value)}
+                  placeholder="Paste JD for targeted questions…"
+                  style={{ minHeight: '80px' }}
+                />
+              </div>
               <div className="form-group">
                 <label>Resume (PDF / DOCX) — optional</label>
                 <input type="file" accept=".pdf,.docx" onChange={e => handleResumeSelect(e.target.files[0])} />
@@ -1050,7 +1564,9 @@ export default function InterviewRoom() {
             )}
 
             {isCode ? (
-              <div style={{ marginTop: '16px' }}><CodeEditor value={codeValue} onChange={v => setCodeValue(v||'')} language={codeLang} onLanguageChange={setCodeLang} /></div>
+              <div style={{ marginTop: '16px' }}>
+                <CodeEditor value={codeValue} onChange={v => setCodeValue(v || '')} language={codeLang} onLanguageChange={setCodeLang} />
+              </div>
             ) : (
               <div style={{ marginTop: '16px' }}>
                 <div style={S.recordRow}>
@@ -1060,7 +1576,19 @@ export default function InterviewRoom() {
                   {recording && <span style={{ fontSize: '13px', color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: '4px' }}><span className="pulse" style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--danger)', display: 'inline-block' }} />Recording…</span>}
                   {transcribing && <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Transcribing…</span>}
                 </div>
-                <textarea value={textAnswer} onChange={e => setTextAnswer(e.target.value)} placeholder="Answer appears here after recording, or type directly…" style={S.textarea} disabled={hrSpeaking} />
+                <textarea
+                  value={textAnswer}
+                  onChange={e => setTextAnswer(e.target.value)}
+                  onBlur={e => enqueueAction({
+                    action_type: 'blur',
+                    field_name: `answer_text_${qIndex + 1}`,
+                    new_value: e.target.value,
+                    message: `Reviewed answer draft for question #${qIndex + 1} at ${new Date().toLocaleTimeString()}`,
+                  })}
+                  placeholder="Answer appears here after recording, or type directly…"
+                  style={S.textarea}
+                  disabled={hrSpeaking}
+                />
               </div>
             )}
 

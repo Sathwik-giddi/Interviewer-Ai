@@ -60,12 +60,17 @@ export default function ReportView() {
   const answers = session.answers || []
   const evaluation = session.evaluation || null
   const violations = session.violations || []
+  const detailedReport = session.detailedReport || null
   const recommendation = evaluation?.recommendation || session.recommendation || 'pending'
   const strengths = evaluation?.strengths || []
   const weaknesses = evaluation?.areasToImprove || []
   const duration = session.duration ? `${Math.floor(session.duration / 60)}m ${session.duration % 60}s` : null
-  const candidateName = session.candidateName || 'Candidate'
+  const candidateName = detailedReport?.header?.candidateName || session.candidateName || 'Candidate'
   const jobTitle = session.campaignTitle || session.jobTitle || 'Interview Session'
+  const chronologicalLog = detailedReport?.whatTheyDid || []
+  const mistakes = detailedReport?.whereTheyMessedUp || []
+  const detailedSummary = detailedReport?.executiveSummary || null
+  const reportCandidateId = session.candidateId || detailedReport?.header?.candidateId || ''
 
   // Violation summary
   const violationSummary = {}
@@ -146,8 +151,62 @@ export default function ReportView() {
       })
     }
 
+    if (mistakes.length > 0) {
+      const mY = pdf.lastAutoTable?.finalY ? pdf.lastAutoTable.finalY + 10 : startY + 10
+      pdf.setFontSize(12)
+      pdf.text('Mistakes & Corrections', 14, mY)
+      pdf.autoTable({
+        startY: mY + 5,
+        head: [['Issue', 'Correction']],
+        body: mistakes.map(item => [
+          String(item.title || '').substring(0, 90),
+          String(item.correction || '').substring(0, 120),
+        ]),
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [234, 179, 8] },
+      })
+    }
+
+    if (chronologicalLog.length > 0) {
+      const aY = pdf.lastAutoTable?.finalY ? pdf.lastAutoTable.finalY + 10 : startY + 10
+      pdf.setFontSize(12)
+      pdf.text('Action Log (abridged)', 14, aY)
+      pdf.autoTable({
+        startY: aY + 5,
+        head: [['Time', 'Action']],
+        body: chronologicalLog.slice(0, 25).map(item => [
+          String(item.timestamp || '').substring(0, 22),
+          String(item.message || '').substring(0, 120),
+        ]),
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [59, 130, 246] },
+      })
+    }
+
     pdf.save(`interview-report-${sessionId}.pdf`)
     toast.info('PDF downloaded!')
+  }
+
+  async function exportText() {
+    if (!reportCandidateId) {
+      toast.warning('Plain text export is unavailable for this report.')
+      return
+    }
+    try {
+      const res = await fetch(apiUrl(`/api/report/${reportCandidateId}?session_id=${encodeURIComponent(sessionId)}&format=txt`))
+      if (!res.ok) throw new Error('Failed to export text report')
+      const text = await res.text()
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `interview-report-${sessionId}.txt`
+      anchor.click()
+      URL.revokeObjectURL(url)
+      toast.info('Text report downloaded!')
+    } catch (err) {
+      toast.error(err.message || 'Could not export text report.')
+    }
   }
 
   return (
@@ -194,6 +253,29 @@ export default function ReportView() {
             <p style={{ fontSize: '15px', lineHeight: '1.8', color: 'var(--text)', marginTop: '12px' }}>
               {evaluation.summary}
             </p>
+          </div>
+        )}
+
+        {detailedSummary && (
+          <div className="card" style={{ marginBottom: '24px' }}>
+            <h2 style={styles.sectionTitle}>EXECUTIVE SUMMARY</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginTop: '14px' }}>
+              <div style={styles.metaTile}><strong>{detailedSummary.totalActions}</strong><span>Tracked actions</span></div>
+              <div style={styles.metaTile}><strong>{detailedSummary.mistakeCount}</strong><span>Issues flagged</span></div>
+              <div style={styles.metaTile}><strong>{detailedSummary.violationCount}</strong><span>Rule violations</span></div>
+              <div style={styles.metaTile}><strong>{detailedSummary.completed ? 'Yes' : 'No'}</strong><span>Completed</span></div>
+            </div>
+            <p style={{ fontSize: '14px', lineHeight: '1.7', marginTop: '16px' }}>{detailedSummary.summaryText}</p>
+            {detailedReport?.header?.pagesVisited?.length > 0 && (
+              <div style={{ marginTop: '14px' }}>
+                <p style={styles.label}>Pages Visited</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
+                  {detailedReport.header.pagesVisited.map(page => (
+                    <span key={page} style={styles.pageChip}>{page}</span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -287,6 +369,67 @@ export default function ReportView() {
           )
         })}
 
+        {chronologicalLog.length > 0 && (
+          <>
+            <hr className="divider" style={{ margin: '32px 0' }} />
+            <h2 style={{ ...styles.sectionTitle, marginBottom: '16px' }}>WHAT THEY DID</h2>
+            <div className="card" style={{ maxHeight: '360px', overflowY: 'auto' }}>
+              {chronologicalLog.map((entry, index) => (
+                <div key={`${entry.timestamp || 'row'}-${index}`} style={{ ...styles.timelineRow, borderBottom: index < chronologicalLog.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                  <div style={styles.timelineStamp}>{entry.timestamp || 'N/A'}</div>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>{entry.message}</p>
+                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: 0 }}>
+                      {entry.actionType || 'action'}{entry.fieldName ? ` • ${entry.fieldName}` : ''}{entry.pageUrl ? ` • ${entry.pageUrl}` : ''}
+                    </p>
+                    {(entry.oldValue || entry.newValue) && (
+                      <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                        {entry.oldValue ? `From: ${entry.oldValue}` : 'From: empty'} → {entry.newValue ? `To: ${entry.newValue}` : 'To: empty'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {mistakes.length > 0 && (
+          <>
+            <hr className="divider" style={{ margin: '32px 0' }} />
+            <h2 style={{ ...styles.sectionTitle, marginBottom: '16px' }}>MISTAKES & CORRECTIONS</h2>
+            <div style={{ display: 'grid', gap: '12px' }}>
+              {mistakes.map((item, index) => (
+                <div key={`${item.category || 'issue'}-${index}`} className="card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                    <div>
+                      <p style={{ fontWeight: 700, fontSize: '15px', marginBottom: '6px' }}>{item.title}</p>
+                      <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                        Category: {(item.category || 'issue').replace(/_/g, ' ')}
+                      </p>
+                    </div>
+                    <span className="badge badge-danger">Issue</span>
+                  </div>
+                  <div style={styles.answerBox}>
+                    <p style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                      Evidence
+                    </p>
+                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: '13px', fontFamily: 'inherit' }}>
+                      {typeof item.evidence === 'string' ? item.evidence : JSON.stringify(item.evidence, null, 2)}
+                    </pre>
+                  </div>
+                  <div style={{ ...styles.feedbackBox, marginTop: '10px' }}>
+                    <strong style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      Correction
+                    </strong>
+                    <p style={{ fontSize: '14px', marginTop: '6px', lineHeight: '1.7' }}>{item.correction}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
         {/* Proctoring Violations */}
         <hr className="divider" style={{ margin: '32px 0' }} />
         <h2 style={{ ...styles.sectionTitle, marginBottom: '16px' }}>
@@ -345,6 +488,7 @@ export default function ReportView() {
             </svg>
             Export PDF
           </button>
+          <button className="btn btn-outline" onClick={exportText}>Export Text</button>
           <button className="btn btn-outline" onClick={shareLink}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '6px' }}>
               <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
@@ -421,6 +565,21 @@ const styles = {
     border: '1px solid var(--primary)',
     padding: '12px 14px',
   },
+  metaTile: {
+    display: 'grid',
+    gap: '4px',
+    padding: '14px',
+    background: 'var(--bg-subtle)',
+    border: '1px solid var(--border)',
+  },
+  pageChip: {
+    padding: '6px 10px',
+    background: 'var(--bg-subtle)',
+    border: '1px solid var(--border)',
+    fontSize: '12px',
+    color: 'var(--text-muted)',
+    wordBreak: 'break-word',
+  },
   matchBar: {
     flex: 1,
     height: '8px',
@@ -452,5 +611,16 @@ const styles = {
     borderRadius: '50%',
     background: '#dc2626',
     flexShrink: 0,
+  },
+  timelineRow: {
+    display: 'grid',
+    gridTemplateColumns: '160px 1fr',
+    gap: '16px',
+    padding: '14px',
+  },
+  timelineStamp: {
+    fontSize: '12px',
+    color: 'var(--text-muted)',
+    wordBreak: 'break-word',
   },
 }

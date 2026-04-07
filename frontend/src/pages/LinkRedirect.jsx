@@ -8,7 +8,7 @@
  */
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { apiUrl } from '../lib/runtimeConfig'
+import { apiUrl, routePathFromAppUrl } from '../lib/runtimeConfig'
 
 export default function LinkRedirect() {
   const { linkId } = useParams()
@@ -40,14 +40,13 @@ export default function LinkRedirect() {
       const link = data.link
 
       // Redirect based on type
-      if (link.type === 'mock') {
+      if (link.fullLink) {
+        navigate(routePathFromAppUrl(link.fullLink), { replace: true })
+      } else if (link.type === 'mock') {
         navigate(`/mock?token=${link.linkId}`, { replace: true })
       } else if (link.roomId) {
-        navigate(`/interview/${link.roomId}`, { replace: true })
-      } else if (link.fullLink) {
-        // Fallback: extract path from the full link
-        const url = new URL(link.fullLink)
-        navigate(url.pathname, { replace: true })
+        const tokenPart = link.candidateToken ? `?token=${encodeURIComponent(link.candidateToken)}` : ''
+        navigate(`/interview/${link.roomId}${tokenPart}`, { replace: true })
       } else {
         setError('Link data is incomplete. Please contact HR.')
       }

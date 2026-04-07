@@ -29,6 +29,8 @@ export default function LinkModal({
   // ── Form state ──
   const [email, setEmail] = useState('')
   const [candidateName, setCandidateName] = useState('')
+  const [candidatePhone, setCandidatePhone] = useState('')
+  const [candidateCustomId, setCandidateCustomId] = useState('')
   const [jobTitle, setJobTitle] = useState('')
   const [campaignId, setCampaignId] = useState('')
   const [note, setNote] = useState('')
@@ -38,6 +40,8 @@ export default function LinkModal({
   function resetForm() {
     setEmail('')
     setCandidateName('')
+    setCandidatePhone('')
+    setCandidateCustomId('')
     setJobTitle('')
     setCampaignId('')
     setNote('')
@@ -66,6 +70,8 @@ export default function LinkModal({
         userId,
         email: mode === 'hr' ? email.trim() : userEmail,
         candidateName: candidateName.trim(),
+        candidatePhone: candidatePhone.trim(),
+        candidateCustomId: candidateCustomId.trim(),
         jobTitle: jobTitle.trim(),
         campaignId: campaignId || undefined,
         note: note.trim(),
@@ -140,6 +146,24 @@ export default function LinkModal({
                   value={candidateName}
                   onChange={e => setCandidateName(e.target.value)}
                   placeholder="John Doe"
+                  style={S.input}
+                />
+              </div>
+              <div className="form-group">
+                <label style={S.label}>CANDIDATE PHONE</label>
+                <input
+                  value={candidatePhone}
+                  onChange={e => setCandidatePhone(e.target.value)}
+                  placeholder="+91 98765 43210"
+                  style={S.input}
+                />
+              </div>
+              <div className="form-group">
+                <label style={S.label}>CUSTOM CANDIDATE ID</label>
+                <input
+                  value={candidateCustomId}
+                  onChange={e => setCandidateCustomId(e.target.value)}
+                  placeholder="EMP-2026-001"
                   style={S.input}
                 />
               </div>

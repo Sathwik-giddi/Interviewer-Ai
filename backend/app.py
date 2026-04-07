@@ -73,6 +73,15 @@ from question_service import (
     select_questions_for_pool,
     get_dataset_stats,
 )
+from candidate_audit import (
+    build_candidate_report,
+    cache_link_data,
+    create_candidate_token,
+    lookup_candidate_by_token,
+    log_candidate_actions,
+    render_report_as_text,
+    upsert_candidate_progress,
+)
 # Pre-load datasets at startup
 try:
     _dataset = load_all_questions()
@@ -459,6 +468,8 @@ def generate_evaluation():
     session_id = data.get('session_id', '')
     answers    = data.get('answers', [])
     room_id    = data.get('room_id', '')
+    link_token = data.get('link_token', '')
+    link_id    = data.get('link_id', '')
     context    = build_session_context(room_id, data.get('campaign_id', ''))
     violations = data.get('violations', []) or _violation_logs.get(session_id, [])
 
@@ -519,10 +530,14 @@ Write a concise professional evaluation report. Return ONLY valid JSON:
             'candidateId': data.get('candidate_id', ''),
             'candidateEmail': data.get('candidate_email', ''),
             'candidateName': data.get('candidateName', ''),
+            'candidatePhone': data.get('candidate_phone', ''),
+            'candidateCustomId': data.get('candidate_custom_id', ''),
             'jobTitle': data.get('jobTitle', ''),
             'campaignId': context.get('campaignId') or data.get('campaign_id', ''),
             'campaignTitle': context.get('campaignTitle'),
             'hrId': context.get('hrId') or data.get('hr_id', ''),
+            'linkId': link_id or (context.get('link') or {}).get('linkId') or '',
+            'linkToken': link_token,
             'matchScore': data.get('match_score'),
             'answers': answers,
             'duration': data.get('duration', 0),
@@ -534,6 +549,9 @@ Write a concise professional evaluation report. Return ONLY valid JSON:
             'status': 'completed',
             'endedAt': datetime.datetime.utcnow(),
             'startedAt': parse_client_datetime(data.get('started_at')),
+            'questions': data.get('questions') or [],
+            'questionDurations': data.get('question_durations') or {},
+            'pagesVisited': data.get('pages_visited') or [],
         }
         try:
             db = _get_firestore_db()
@@ -542,6 +560,52 @@ Write a concise professional evaluation report. Return ONLY valid JSON:
             db.collection('sessions').document(session_id).set(session_doc, merge=True)
         except Exception:
             _sessions_store.setdefault(session_id, {}).update(session_doc)
+
+        try:
+            progress = upsert_candidate_progress({
+                'session_id': session_id,
+                'candidate_id': data.get('candidate_id', ''),
+                'room_id': room_id,
+                'campaign_id': context.get('campaignId') or data.get('campaign_id', ''),
+                'link_id': session_doc.get('linkId') or '',
+                'observer_room_id': context.get('observerRoomId') or data.get('observer_room_id', ''),
+                'status': 'completed',
+                'fields': {
+                    'candidateName': data.get('candidateName', ''),
+                    'candidateEmail': data.get('candidate_email', ''),
+                    'candidatePhone': data.get('candidate_phone', ''),
+                    'candidateCustomId': data.get('candidate_custom_id', ''),
+                    'jobTitle': data.get('jobTitle', ''),
+                    'jobDescription': data.get('jobDescription', ''),
+                },
+                'questions': data.get('questions') or [],
+                'answers': answers,
+                'current_index': data.get('current_index') or len(answers),
+                'match_score': data.get('match_score'),
+                'parsed_resume': data.get('parsed_resume'),
+                'question_durations': data.get('question_durations') or {},
+                'pages_visited': data.get('pages_visited') or [],
+                'duration': data.get('duration', 0),
+                'violations': violations,
+                'started_at': data.get('started_at'),
+                'completed_at': datetime.datetime.utcnow().isoformat() + 'Z',
+                'overall_score': result['overallScore'],
+                'recommendation': result.get('recommendation'),
+                'question_evals': result.get('questionEvals', q_evals),
+                'evaluation': result,
+            })
+            detailed_report = build_candidate_report(progress.get('candidateId', ''), session_id=session_id)
+            result['detailedReport'] = detailed_report
+            session_doc['detailedReport'] = detailed_report
+            try:
+                db = _get_firestore_db()
+                if db is None:
+                    raise RuntimeError('Firestore unavailable')
+                db.collection('sessions').document(session_id).set({'detailedReport': detailed_report}, merge=True)
+            except Exception:
+                _sessions_store.setdefault(session_id, {}).update({'detailedReport': detailed_report})
+        except Exception as report_err:
+            print(f"[Report] Detailed report generation skipped: {report_err}")
 
     return jsonify(result)
 
@@ -552,6 +616,11 @@ def start_interview():
     data = request.json or {}
     session_id = data.get('session_id', '').strip()
     room_id = data.get('room_id', '').strip()
+    candidate_email = (data.get('candidate_email') or '').strip()
+    candidate_name = (data.get('candidate_name') or '').strip()
+    candidate_phone = (data.get('candidate_phone') or '').strip()
+    candidate_custom_id = (data.get('candidate_custom_id') or '').strip()
+    link_id = (data.get('link_id') or '').strip()
 
     if not session_id or not room_id:
         return jsonify({'error': 'session_id and room_id are required'}), 400
@@ -562,13 +631,16 @@ def start_interview():
         'roomId': room_id,
         'observerRoomId': context.get('observerRoomId'),
         'candidateId': data.get('candidate_id', ''),
-        'candidateEmail': data.get('candidate_email', ''),
-        'candidateName': data.get('candidate_name', ''),
+        'candidateEmail': candidate_email,
+        'candidateName': candidate_name,
+        'candidatePhone': candidate_phone,
+        'candidateCustomId': candidate_custom_id,
         'jobTitle': data.get('job_title', '') or context.get('campaignTitle'),
         'campaignId': context.get('campaignId'),
         'campaignTitle': context.get('campaignTitle'),
         'hrId': context.get('hrId'),
         'matchScore': data.get('match_score'),
+        'linkId': link_id or (context.get('link') or {}).get('linkId') or '',
         'status': 'in-progress',
         'startedAt': parse_client_datetime(data.get('started_at')),
     }
@@ -592,8 +664,41 @@ def start_interview():
     except Exception as e:
         print(f"[Session Start] Firestore save failed (in-memory only): {e}")
 
+    try:
+        progress = upsert_candidate_progress({
+            'session_id': session_id,
+            'candidate_id': data.get('candidate_id', ''),
+            'room_id': room_id,
+            'campaign_id': context.get('campaignId') or data.get('campaign_id', ''),
+            'link_id': session_doc.get('linkId') or '',
+            'observer_room_id': context.get('observerRoomId'),
+            'status': 'in-progress',
+            'fields': {
+                'candidateName': candidate_name,
+                'candidateEmail': candidate_email,
+                'candidatePhone': candidate_phone,
+                'candidateCustomId': candidate_custom_id,
+                'jobTitle': data.get('job_title', '') or context.get('campaignTitle') or '',
+                'jobDescription': data.get('job_description', ''),
+            },
+            'questions': data.get('questions') or [],
+            'answers': data.get('answers') or [],
+            'current_index': data.get('current_index') or 0,
+            'match_score': data.get('match_score'),
+            'parsed_resume': data.get('parsed_resume'),
+            'question_durations': data.get('question_durations') or {},
+            'pages_visited': data.get('pages_visited') or [],
+            'duration': data.get('duration') or 0,
+            'violations': data.get('violations') or [],
+            'started_at': data.get('started_at'),
+        })
+        session_doc['candidateId'] = progress.get('candidateId') or session_doc['candidateId']
+    except Exception as progress_err:
+        print(f"[Session Start] Candidate progress save failed: {progress_err}")
+
     return jsonify({
         'ok': True,
+        'candidateId': session_doc.get('candidateId') or None,
         'campaignId': context.get('campaignId') or None,
         'campaignTitle': context.get('campaignTitle') or None,
         'hrId': context.get('hrId') or None,
@@ -1126,6 +1231,14 @@ def get_interview_report(session_id):
     report['recommendation'] = eval_data.get('recommendation', recommendation)
     report['overallScore'] = score
 
+    candidate_id = report.get('candidateId', '')
+    try:
+        if candidate_id:
+            detailed_report = build_candidate_report(candidate_id, session_id=session_id)
+            report['detailedReport'] = detailed_report
+    except Exception:
+        pass
+
     # Check if we actually found any real data (not just our computed fields)
     has_data = (
         session_id in _sessions_store
@@ -1136,6 +1249,92 @@ def get_interview_report(session_id):
     )
     if not has_data:
         return jsonify({'error': 'Session not found'}), 404
+
+    return jsonify(report)
+
+
+@app.route('/api/candidate/lookup', methods=['GET'])
+def candidate_lookup():
+    token = (request.args.get('token') or '').strip()
+    if not token:
+        return jsonify({'error': 'token is required'}), 400
+
+    try:
+        payload = lookup_candidate_by_token(token)
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
+    except LookupError as err:
+        return jsonify({'error': str(err)}), 404
+    except Exception as err:
+        traceback.print_exc()
+        return jsonify({'error': str(err)}), 500
+
+    if not payload.get('draft') and not payload.get('profile'):
+        return jsonify({'error': 'No previous candidate submission found for this link'}), 404
+
+    return jsonify({
+        'found': True,
+        'candidateId': payload.get('candidate_id'),
+        'assessmentKey': payload.get('assessment_key'),
+        'fields': payload.get('fields') or {},
+        'profile': payload.get('profile') or {},
+        'draft': payload.get('draft') or None,
+        'link': payload.get('link') or {},
+        'lastUpdatedAt': payload.get('last_updated_at'),
+        'message': f"We found your previous entry (from {payload.get('last_updated_at') or 'an earlier session'}). You can continue editing below.",
+    })
+
+
+@app.route('/api/candidate/progress', methods=['POST'])
+def candidate_progress():
+    data = request.json or {}
+    try:
+        saved = upsert_candidate_progress(data)
+        return jsonify({
+            'ok': True,
+            'candidateId': saved.get('candidateId'),
+            'sessionId': saved.get('sessionId'),
+            'lastUpdatedAt': saved.get('lastUpdatedAt'),
+            'status': saved.get('status'),
+        })
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
+    except Exception as err:
+        traceback.print_exc()
+        return jsonify({'error': str(err)}), 500
+
+
+@app.route('/api/candidate/actions', methods=['POST'])
+def candidate_actions():
+    data = request.json or {}
+    actions = data.get('actions') if isinstance(data, dict) else None
+    if not isinstance(actions, list) or not actions:
+        return jsonify({'error': 'actions must be a non-empty list'}), 400
+
+    try:
+        persisted = log_candidate_actions(actions)
+        return jsonify({'ok': True, 'persisted': persisted})
+    except Exception as err:
+        traceback.print_exc()
+        return jsonify({'error': str(err)}), 500
+
+
+@app.route('/api/report/<candidate_id>', methods=['GET'])
+def get_candidate_report(candidate_id):
+    session_id = (request.args.get('session_id') or '').strip()
+    output_format = (request.args.get('format') or 'json').strip().lower()
+
+    try:
+        report = build_candidate_report(candidate_id, session_id=session_id)
+    except LookupError as err:
+        return jsonify({'error': str(err)}), 404
+    except Exception as err:
+        traceback.print_exc()
+        return jsonify({'error': str(err)}), 500
+
+    if output_format == 'txt':
+        text_report = render_report_as_text(report)
+        return app.response_class(text_report, mimetype='text/plain')
 
     return jsonify(report)
 
@@ -1202,6 +1401,8 @@ def generate_link():
         user_id = data.get('userId', '')
         email = data.get('email', '').strip()
         candidate_name = data.get('candidateName', '').strip()
+        candidate_phone = data.get('candidatePhone', '').strip()
+        candidate_custom_id = data.get('candidateCustomId', '').strip()
         job_title = data.get('jobTitle', '').strip()
         campaign_id = data.get('campaignId', '')
         note = data.get('note', '').strip()
@@ -1213,13 +1414,20 @@ def generate_link():
 
         # ── Generate unique link ID ──
         link_id = secrets.token_urlsafe(16)
+        room_id = campaign_id or f"link-{link_id[:12]}-{secrets.token_hex(4)}"
+        candidate_token = create_candidate_token(
+            link_id=link_id,
+            room_id=room_id,
+            email=email,
+            phone=candidate_phone,
+            custom_id=candidate_custom_id,
+        )
 
         # ── Build the full URL ──
         if link_type == 'mock':
             full_link = build_frontend_app_url(frontend_url, f"/mock?token={link_id}")
         else:
-            room_id = campaign_id or f"link-{link_id[:12]}-{secrets.token_hex(4)}"
-            full_link = build_frontend_app_url(frontend_url, f"/interview/{room_id}")
+            full_link = build_frontend_app_url(frontend_url, f"/interview/{room_id}?token={candidate_token}")
 
         # ── Store link data ──
         link_data = {
@@ -1228,10 +1436,13 @@ def generate_link():
             "createdBy": user_id,
             "forEmail": email,
             "candidateName": candidate_name,
+            "candidatePhone": candidate_phone,
+            "candidateCustomId": candidate_custom_id,
             "jobTitle": job_title,
             "campaignId": campaign_id,
             "roomId": room_id if link_type != 'mock' else None,
             "fullLink": full_link,
+            "candidateToken": candidate_token,
             "createdAt": datetime.datetime.utcnow().isoformat(),
             "used": False,
             "note": note,
@@ -1249,6 +1460,7 @@ def generate_link():
 
         # Always save to in-memory store
         _links_store[link_id] = link_data
+        cache_link_data(link_data)
 
         # ── Send email via Resend ──
         # NOTE: Resend free tier can only send to the verified owner email.
@@ -1289,6 +1501,7 @@ def generate_link():
             "link": full_link,
             "linkId": link_id,
             "roomId": link_data.get("roomId"),
+            "candidateToken": candidate_token,
             "emailSent": email_result.get("sent", False),
             "emailMethod": email_result.get("method", "none"),
             "emailError": email_error,
@@ -1388,6 +1601,7 @@ def get_link(link_id):
         except Exception:
             pass
         _links_store[link_id] = link_data
+        cache_link_data(link_data)
 
         return jsonify({
             "found": True,
@@ -1398,6 +1612,7 @@ def get_link(link_id):
                 "fullLink": link_data.get("fullLink"),
                 "jobTitle": link_data.get("jobTitle"),
                 "campaignId": link_data.get("campaignId"),
+                "candidateToken": link_data.get("candidateToken"),
                 "used": True,
             }
         })
