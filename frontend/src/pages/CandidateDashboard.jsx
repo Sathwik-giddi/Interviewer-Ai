@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import LinkModal from '../components/LinkModal'
 import LinkList from '../components/LinkList'
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore'
+import { collection, query, where, getDocs } from 'firebase/firestore'
 import { db } from '../firebase'
 
 export default function CandidateDashboard() {
@@ -24,12 +24,17 @@ export default function CandidateDashboard() {
     try {
       const q = query(
         collection(db, 'sessions'),
-        where('candidateId', '==', currentUser.uid),
-        orderBy('startedAt', 'desc')
+        where('candidateId', '==', currentUser.uid)
       )
       const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
       const snap = await Promise.race([getDocs(q), timeout])
-      setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      data.sort((a, b) => {
+        const da = a.startedAt?.toDate ? a.startedAt.toDate() : new Date(a.startedAt || 0)
+        const db = b.startedAt?.toDate ? b.startedAt.toDate() : new Date(b.startedAt || 0)
+        return db - da
+      })
+      setSessions(data)
     } catch (e) {
       console.warn('Load sessions error:', e)
     } finally {

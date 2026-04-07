@@ -8,8 +8,7 @@
  */
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-
-const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
+import { apiUrl } from '../lib/runtimeConfig'
 
 export default function LinkRedirect() {
   const { linkId } = useParams()
@@ -26,7 +25,7 @@ export default function LinkRedirect() {
 
   async function validateAndRedirect() {
     try {
-      const res = await fetch(`${BACKEND}/api/link/${encodeURIComponent(linkId)}`)
+      const res = await fetch(apiUrl(`/api/link/${encodeURIComponent(linkId)}`))
       if (!res.ok) {
         setError('This link is invalid or has expired.')
         return

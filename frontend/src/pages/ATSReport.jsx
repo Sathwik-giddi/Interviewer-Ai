@@ -5,8 +5,7 @@
 import React, { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
-
-const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
+import { apiUrl } from '../lib/runtimeConfig'
 
 export default function ATSReport() {
   const { currentUser } = useAuth()
@@ -29,7 +28,7 @@ export default function ATSReport() {
     fd.append('required_skills', reqSkills)
 
     try {
-      const res = await fetch(`${BACKEND}/api/ats/score`, { method: 'POST', body: fd })
+      const res = await fetch(apiUrl('/api/ats/score'), { method: 'POST', body: fd })
       if (res.ok) {
         const data = await res.json()
         setReport(data)

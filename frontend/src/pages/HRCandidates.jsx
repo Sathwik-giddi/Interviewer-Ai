@@ -8,8 +8,7 @@ import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
 import { collection, getDocs, addDoc, doc, updateDoc, query, where, orderBy } from 'firebase/firestore'
 import { db } from '../firebase'
-
-const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
+import { apiUrl } from '../lib/runtimeConfig'
 
 export default function HRCandidates() {
   const { currentUser } = useAuth()
@@ -56,7 +55,7 @@ export default function HRCandidates() {
       fd.append('resume', file)
       fd.append('job_description', form.jobDescription || form.jobTitle)
       fd.append('required_skills', form.jobTitle)
-      const res = await fetch(`${BACKEND}/api/parse-resume`, { method: 'POST', body: fd })
+      const res = await fetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd })
       if (res.ok) {
         const data = await res.json()
         setParsedResume(data)

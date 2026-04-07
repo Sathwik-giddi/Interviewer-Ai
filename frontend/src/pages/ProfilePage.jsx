@@ -8,8 +8,7 @@ import { useToast } from '../components/Toast'
 import { doc, getDoc, updateDoc } from 'firebase/firestore'
 import { updatePassword } from 'firebase/auth'
 import { db, auth } from '../firebase'
-
-const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
+import { apiUrl } from '../lib/runtimeConfig'
 
 export default function ProfilePage() {
   const { currentUser, userRole } = useAuth()
@@ -79,7 +78,7 @@ export default function ProfilePage() {
     try {
       const fd = new FormData()
       fd.append('resume', file)
-      const res = await fetch(`${BACKEND}/api/parse-resume`, { method: 'POST', body: fd })
+      const res = await fetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd })
       if (res.ok) {
         const data = await res.json()
         setParsedResume(data)

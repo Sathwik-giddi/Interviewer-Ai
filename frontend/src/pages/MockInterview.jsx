@@ -8,8 +8,7 @@ import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
 import CodeEditor from '../components/CodeEditor'
 import TalkingAvatar from '../components/TalkingAvatar'
-
-const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
+import { apiUrl } from '../lib/runtimeConfig'
 
 export default function MockInterview() {
   const { currentUser } = useAuth()
@@ -46,7 +45,7 @@ export default function MockInterview() {
     const score = difficulty === 'advanced' ? 80 : difficulty === 'intermediate' ? 50 : 20
 
     try {
-      const res = await fetch(`${BACKEND}/api/select-questions`, {
+      const res = await fetch(apiUrl('/api/select-questions'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ job_title: title, match_score: score }),
@@ -196,7 +195,7 @@ export default function MockInterview() {
     const fd = new FormData()
     fd.append('audio', blob, `mock.${ext}`)
     try {
-      const res = await fetch(`${BACKEND}/api/transcribe`, { method: 'POST', body: fd })
+      const res = await fetch(apiUrl('/api/transcribe'), { method: 'POST', body: fd })
       if (res.ok) {
         const data = await res.json()
         if (data.text) setTextAnswer(prev => prev ? prev + ' ' + data.text : data.text)
@@ -216,7 +215,7 @@ export default function MockInterview() {
 
     let evalResult = { score: 5, feedback: 'Practice answer recorded.' }
     try {
-      const res = await fetch(`${BACKEND}/api/evaluate-answer-ai`, {
+      const res = await fetch(apiUrl('/api/evaluate-answer-ai'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: q.text, answer: answerText, model_answer: q.modelAnswer || '', rubric: q.rubric || '' }),

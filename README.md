@@ -2,6 +2,8 @@
 
 A production-ready AI-powered interview platform featuring Gemini AI question generation, ATS resume parsing, live HR monitoring, face proctoring, Monaco code editor, and Firebase auth — all styled with the Agentica 2.0 design system.
 
+Production deployment notes are in [DEPLOYMENT.md](/Users/sathwik/Desktop/Ai-Video-Interviewer%2012.35.08%E2%80%AFPM/DEPLOYMENT.md).
+
 ---
 
 ## Quick Start
@@ -32,7 +34,7 @@ Edit each `.env`:
 ```bash
 cd backend
 pip install -r requirements.txt
-python app.py
+python3 app.py
 ```
 
 ### 4. Signaling Server (Node.js, port 3000)

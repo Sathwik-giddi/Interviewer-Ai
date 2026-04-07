@@ -27,6 +27,7 @@ app.get('/health', (_, res) => res.json({ status: 'ok' }))
  *   }
  */
 const rooms = {}
+const observerAliases = new Map()
 
 function getRoom(roomId) {
   if (!rooms[roomId]) {
@@ -35,32 +36,38 @@ function getRoom(roomId) {
   return rooms[roomId]
 }
 
+function resolveRoomId(roomId) {
+  return observerAliases.get(roomId) || roomId
+}
+
 io.on('connection', (socket) => {
   console.log(`[+] Socket connected: ${socket.id}`)
 
   // ── Join room ──────────────────────────────────────────────────────────
   socket.on('join-room', ({ roomId, userId, role }) => {
     socket.join(roomId)
-    socket.data.roomId = roomId
+    const resolvedRoomId = resolveRoomId(roomId)
+    socket.data.roomId = resolvedRoomId
+    socket.data.joinedRoomId = roomId
     socket.data.userId = userId
     socket.data.role   = role
 
-    const room = getRoom(roomId)
+    const room = getRoom(resolvedRoomId)
 
     if (role === 'candidate') {
       // Enforce single candidate per room
       if (room.candidateLocked && room.candidate && room.candidate !== socket.id) {
-        console.log(`[room:${roomId}] REJECTED duplicate candidate: ${userId}`)
+        console.log(`[room:${resolvedRoomId}] REJECTED duplicate candidate: ${userId}`)
         socket.emit('room-locked', { message: 'This interview room already has an active candidate. Each link supports only one session at a time.' })
         socket.leave(roomId)
         return
       }
       room.candidate = socket.id
       room.candidateLocked = true
-      console.log(`[room:${roomId}] Candidate joined: ${userId}`)
+      console.log(`[room:${resolvedRoomId}] Candidate joined: ${userId}`)
     } else if (role === 'hr') {
       room.hr = socket.id
-      console.log(`[room:${roomId}] HR joined (observer): ${userId}`)
+      console.log(`[room:${resolvedRoomId}] HR joined (observer): ${userId}`)
       room.observers.add(socket.id)
     }
 
@@ -72,9 +79,36 @@ io.on('connection', (socket) => {
     })
   })
 
+  socket.on('register-observer-alias', ({ observerRoomId, sourceRoomId }) => {
+    if (!observerRoomId || !sourceRoomId || observerRoomId === sourceRoomId) return
+
+    observerAliases.set(observerRoomId, sourceRoomId)
+
+    const sourceRoom = getRoom(sourceRoomId)
+    const aliasRoom = rooms[observerRoomId]
+
+    if (socket.data.role === 'candidate') {
+      sourceRoom.candidate = socket.id
+      sourceRoom.candidateLocked = true
+    }
+
+    if (aliasRoom) {
+      if (aliasRoom.hr && !sourceRoom.hr) sourceRoom.hr = aliasRoom.hr
+      aliasRoom.observers.forEach((observerId) => sourceRoom.observers.add(observerId))
+      delete rooms[observerRoomId]
+    }
+
+    sourceRoom.observers.forEach((observerId) => {
+      io.to(observerId).emit('room-state', {
+        hasCandidate: !!sourceRoom.candidate,
+        observerCount: sourceRoom.observers.size,
+      })
+    })
+  })
+
   // ── Stream request: HR asks candidate to send WebRTC offer ──────────
   socket.on('request-stream', ({ roomId }) => {
-    const room = getRoom(roomId)
+    const room = getRoom(resolveRoomId(roomId))
     if (room.candidate) {
       console.log(`[room:${roomId}] HR requested stream from candidate`)
       io.to(room.candidate).emit('send-stream', { to: socket.id })
@@ -96,7 +130,7 @@ io.on('connection', (socket) => {
 
   // ── HR speak request → candidate ──────────────────────────────────────
   socket.on('hr-speak-request', ({ roomId }) => {
-    const room = getRoom(roomId)
+    const room = getRoom(resolveRoomId(roomId))
     if (room.candidate) {
       console.log(`[room:${roomId}] HR requested to speak`)
       io.to(room.candidate).emit('hr-speak-request', { hrSocketId: socket.id })
@@ -105,7 +139,7 @@ io.on('connection', (socket) => {
 
   // ── Candidate accepted HR speak → notify HR, tell AI to pause ─────────
   socket.on('hr-speak-accept', ({ roomId }) => {
-    const room = getRoom(roomId)
+    const room = getRoom(resolveRoomId(roomId))
     if (room.hr) {
       console.log(`[room:${roomId}] Candidate accepted HR speak`)
       io.to(room.hr).emit('hr-speak-accepted')
@@ -116,7 +150,7 @@ io.on('connection', (socket) => {
 
   // ── HR ended speaking → resume AI ─────────────────────────────────────
   socket.on('hr-speak-end', ({ roomId }) => {
-    const room = getRoom(roomId)
+    const room = getRoom(resolveRoomId(roomId))
     console.log(`[room:${roomId}] HR ended speaking — resuming AI`)
     // Notify candidate to resume
     if (room.candidate) {
@@ -127,7 +161,7 @@ io.on('connection', (socket) => {
 
   // ── Proctoring alert relay (candidate → HR observer) ──────────────────
   socket.on('proctoring-alert', ({ roomId, warning }) => {
-    const room = getRoom(roomId)
+    const room = getRoom(resolveRoomId(roomId))
     room.observers.forEach(obsId => {
       io.to(obsId).emit('proctoring-alert', { warning, candidateId: socket.data.userId })
     })
@@ -135,7 +169,7 @@ io.on('connection', (socket) => {
 
   // ── Interview state relay (candidate → HR) ────────────────────────────
   socket.on('interview-state', (data) => {
-    const room = getRoom(data.roomId)
+    const room = getRoom(resolveRoomId(data.roomId))
     room.observers.forEach(obsId => {
       io.to(obsId).emit('interview-state', data)
     })
@@ -143,7 +177,7 @@ io.on('connection', (socket) => {
 
   // ── Candidate typing relay (candidate → HR) ──────────────────────────
   socket.on('candidate-typing', (data) => {
-    const room = getRoom(data.roomId)
+    const room = getRoom(resolveRoomId(data.roomId))
     room.observers.forEach(obsId => {
       io.to(obsId).emit('candidate-typing', data)
     })
@@ -151,7 +185,7 @@ io.on('connection', (socket) => {
 
   // ── AI speaking relay (candidate → HR) ────────────────────────────────
   socket.on('ai-speaking', (data) => {
-    const room = getRoom(data.roomId)
+    const room = getRoom(resolveRoomId(data.roomId))
     room.observers.forEach(obsId => {
       io.to(obsId).emit('ai-speaking', data)
     })
@@ -159,7 +193,7 @@ io.on('connection', (socket) => {
 
   // ── Answer submitted relay (candidate → HR) ──────────────────────────
   socket.on('answer-submitted', (data) => {
-    const room = getRoom(data.roomId)
+    const room = getRoom(resolveRoomId(data.roomId))
     room.observers.forEach(obsId => {
       io.to(obsId).emit('answer-submitted', data)
     })
@@ -167,7 +201,7 @@ io.on('connection', (socket) => {
 
   // ── Proctoring state relay (candidate → HR) — mood, objects, warnings
   socket.on('proctoring-state', (data) => {
-    const room = getRoom(data.roomId)
+    const room = getRoom(resolveRoomId(data.roomId))
     room.observers.forEach(obsId => {
       io.to(obsId).emit('proctoring-state', data)
     })
@@ -175,7 +209,7 @@ io.on('connection', (socket) => {
 
   // ── HR custom question relay (HR observer → candidate) ────────────────
   socket.on('hr-custom-question', (data) => {
-    const room = getRoom(data.roomId)
+    const room = getRoom(resolveRoomId(data.roomId))
     if (room.candidate) {
       console.log(`[room:${data.roomId}] HR sent custom question to candidate`)
       io.to(room.candidate).emit('hr-custom-question', data)
@@ -184,7 +218,7 @@ io.on('connection', (socket) => {
 
   // ── HR question audio relay (HR observer → candidate) ────────────────
   socket.on('hr-question-audio', (data) => {
-    const room = getRoom(data.roomId)
+    const room = getRoom(resolveRoomId(data.roomId))
     if (room.candidate) {
       console.log(`[room:${data.roomId}] HR sent question audio to candidate`)
       io.to(room.candidate).emit('hr-question-audio', data)
@@ -221,6 +255,9 @@ io.on('connection', (socket) => {
     // Clean up empty rooms
     if (!room.candidate && !room.hr && room.observers.size === 0) {
       delete rooms[roomId]
+      for (const [aliasRoomId, sourceRoomId] of observerAliases.entries()) {
+        if (sourceRoomId === roomId) observerAliases.delete(aliasRoomId)
+      }
     }
   })
 })

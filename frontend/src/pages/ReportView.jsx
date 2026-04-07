@@ -5,8 +5,7 @@ import { db } from '../firebase'
 import { useToast } from '../components/Toast'
 import jsPDF from 'jspdf'
 import 'jspdf-autotable'
-
-const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
+import { apiUrl } from '../lib/runtimeConfig'
 
 export default function ReportView() {
   const { sessionId } = useParams()
@@ -28,7 +27,7 @@ export default function ReportView() {
 
       // Fallback: backend API
       try {
-        const res = await fetch(`${BACKEND}/api/interview/report/${sessionId}`)
+        const res = await fetch(apiUrl(`/api/interview/report/${sessionId}`))
         if (res.ok) {
           const data = await res.json()
           setSession({ id: sessionId, ...data })

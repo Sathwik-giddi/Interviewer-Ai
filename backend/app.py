@@ -106,6 +106,99 @@ def extract_json(text: str):
     return None
 
 
+def resolve_public_frontend_url(explicit_url: str = '') -> str:
+    explicit_url = (explicit_url or '').strip().rstrip('/')
+    public_url = (os.environ.get('PUBLIC_URL', '') or '').strip().rstrip('/')
+
+    if explicit_url and all(host not in explicit_url for host in ('localhost', '127.0.0.1')):
+        return explicit_url
+
+    if public_url:
+        return public_url
+
+    forwarded_host = (request.headers.get('X-Forwarded-Host') or request.headers.get('Host') or '').split(',')[0].strip()
+    forwarded_proto = (request.headers.get('X-Forwarded-Proto') or request.scheme or 'http').split(',')[0].strip()
+    if forwarded_host:
+        return f'{forwarded_proto}://{forwarded_host}'
+
+    if explicit_url:
+        return explicit_url
+
+    return 'http://localhost:5173'
+
+
+def parse_client_datetime(value: str | None):
+    if not value:
+        return datetime.datetime.utcnow()
+    try:
+        parsed = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+        if parsed.tzinfo:
+            parsed = parsed.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        return parsed
+    except Exception:
+        return datetime.datetime.utcnow()
+
+
+def _get_firestore_db():
+    try:
+        from firebase_service import get_db
+        return get_db()
+    except Exception:
+        return None
+
+
+def find_link_by_room(room_id: str):
+    if not room_id:
+        return None
+
+    db = _get_firestore_db()
+    if db is not None:
+        try:
+            docs = db.collection('links').where('roomId', '==', room_id).limit(1).stream()
+            for doc in docs:
+                data = doc.to_dict() or {}
+                data.setdefault('linkId', doc.id)
+                return data
+        except Exception:
+            pass
+
+    for link_id, link_data in _links_store.items():
+        if link_data.get('roomId') == room_id:
+            return {**link_data, 'linkId': link_data.get('linkId', link_id)}
+    return None
+
+
+def load_campaign_context(campaign_id: str):
+    if not campaign_id:
+        return None
+
+    db = _get_firestore_db()
+    if db is None:
+        return None
+
+    try:
+        snap = db.collection('campaigns').document(campaign_id).get()
+        if snap.exists:
+            return {'id': snap.id, **(snap.to_dict() or {})}
+    except Exception:
+        pass
+    return None
+
+
+def build_session_context(room_id: str, explicit_campaign_id: str = ''):
+    link_data = find_link_by_room(room_id) or {}
+    campaign_id = explicit_campaign_id or link_data.get('campaignId') or ''
+    campaign = load_campaign_context(campaign_id) if campaign_id else None
+    return {
+        'link': link_data,
+        'campaignId': campaign_id,
+        'campaign': campaign or {},
+        'observerRoomId': campaign_id or room_id,
+        'campaignTitle': (campaign or {}).get('title') or link_data.get('jobTitle') or '',
+        'hrId': (campaign or {}).get('hrId') or link_data.get('createdBy') or '',
+    }
+
+
 # ── Skill list for resume parsing ───────────────────────────────────────────
 TECH_SKILLS = [
     "python","javascript","typescript","java","c++","c#","go","rust","ruby","php","swift","kotlin",
@@ -359,6 +452,9 @@ def generate_evaluation():
     data       = request.json or {}
     session_id = data.get('session_id', '')
     answers    = data.get('answers', [])
+    room_id    = data.get('room_id', '')
+    context    = build_session_context(room_id, data.get('campaign_id', ''))
+    violations = data.get('violations', []) or _violation_logs.get(session_id, [])
 
     q_evals = {}
     if session_id and session_id in _sessions_store:
@@ -410,18 +506,93 @@ Write a concise professional evaluation report. Return ONLY valid JSON:
 
     # Update Firestore session
     if session_id:
+        session_doc = {
+            'sessionId': session_id,
+            'roomId': room_id,
+            'observerRoomId': context.get('observerRoomId'),
+            'candidateId': data.get('candidate_id', ''),
+            'candidateEmail': data.get('candidate_email', ''),
+            'candidateName': data.get('candidateName', ''),
+            'jobTitle': data.get('jobTitle', ''),
+            'campaignId': context.get('campaignId') or data.get('campaign_id', ''),
+            'campaignTitle': context.get('campaignTitle'),
+            'hrId': context.get('hrId') or data.get('hr_id', ''),
+            'matchScore': data.get('match_score'),
+            'answers': answers,
+            'duration': data.get('duration', 0),
+            'violations': violations,
+            'totalViolations': len(violations),
+            'questionEvals': result.get('questionEvals', q_evals),
+            'evaluation': result,
+            'overallScore': result['overallScore'],
+            'status': 'completed',
+            'endedAt': datetime.datetime.utcnow(),
+            'startedAt': parse_client_datetime(data.get('started_at')),
+        }
         try:
-            from firebase_service import get_db
-            db = get_db()
-            db.collection('sessions').document(session_id).update({
-                'evaluation': result,
-                'overallScore': result['overallScore'],
-                'status': 'completed',
-            })
+            db = _get_firestore_db()
+            if db is None:
+                raise RuntimeError('Firestore unavailable')
+            db.collection('sessions').document(session_id).set(session_doc, merge=True)
         except Exception:
-            _sessions_store.setdefault(session_id, {}).update(result)
+            _sessions_store.setdefault(session_id, {}).update(session_doc)
 
     return jsonify(result)
+
+
+@app.route('/api/interview/start', methods=['POST'])
+def start_interview():
+    """Create or update a session record when an interview begins."""
+    data = request.json or {}
+    session_id = data.get('session_id', '').strip()
+    room_id = data.get('room_id', '').strip()
+
+    if not session_id or not room_id:
+        return jsonify({'error': 'session_id and room_id are required'}), 400
+
+    context = build_session_context(room_id, data.get('campaign_id', ''))
+    session_doc = {
+        'sessionId': session_id,
+        'roomId': room_id,
+        'observerRoomId': context.get('observerRoomId'),
+        'candidateId': data.get('candidate_id', ''),
+        'candidateEmail': data.get('candidate_email', ''),
+        'candidateName': data.get('candidate_name', ''),
+        'jobTitle': data.get('job_title', '') or context.get('campaignTitle'),
+        'campaignId': context.get('campaignId'),
+        'campaignTitle': context.get('campaignTitle'),
+        'hrId': context.get('hrId'),
+        'matchScore': data.get('match_score'),
+        'status': 'in-progress',
+        'startedAt': parse_client_datetime(data.get('started_at')),
+    }
+
+    _sessions_store.setdefault(session_id, {}).update({
+        'candidateId': session_doc['candidateId'],
+        'candidateName': session_doc['candidateName'],
+        'campaignId': session_doc['campaignId'],
+        'campaignTitle': session_doc['campaignTitle'],
+        'hrId': session_doc['hrId'],
+        'matchScore': session_doc['matchScore'],
+        'status': session_doc['status'],
+        'startedAt': session_doc['startedAt'].isoformat(),
+    })
+
+    try:
+        db = _get_firestore_db()
+        if db is None:
+            raise RuntimeError('Firestore unavailable')
+        db.collection('sessions').document(session_id).set(session_doc, merge=True)
+    except Exception as e:
+        print(f"[Session Start] Firestore save failed (in-memory only): {e}")
+
+    return jsonify({
+        'ok': True,
+        'campaignId': context.get('campaignId') or None,
+        'campaignTitle': context.get('campaignTitle') or None,
+        'hrId': context.get('hrId') or None,
+        'observerRoomId': context.get('observerRoomId') or room_id,
+    })
 
 
 @app.route('/api/parse-resume', methods=['POST'])
@@ -1028,11 +1199,7 @@ def generate_link():
         job_title = data.get('jobTitle', '').strip()
         campaign_id = data.get('campaignId', '')
         note = data.get('note', '').strip()
-        frontend_url = data.get('frontendUrl', 'http://localhost:5173')
-        # Always prefer the ngrok public URL over localhost
-        _public = os.environ.get('PUBLIC_URL', '') or 'https://coriaceous-hygrometrically-zackary.ngrok-free.dev'
-        if _public and ('localhost' in frontend_url or '127.0.0.1' in frontend_url):
-            frontend_url = _public
+        frontend_url = resolve_public_frontend_url(data.get('frontendUrl', 'http://localhost:5173'))
 
         # ── Validation ──
         if role == 'hr' and link_type == 'interview' and not email:
@@ -1045,7 +1212,7 @@ def generate_link():
         if link_type == 'mock':
             full_link = f"{frontend_url}/mock?token={link_id}"
         else:
-            room_id = f"link-{link_id[:12]}-{secrets.token_hex(4)}"
+            room_id = campaign_id or f"link-{link_id[:12]}-{secrets.token_hex(4)}"
             full_link = f"{frontend_url}/interview/{room_id}"
 
         # ── Store link data ──
@@ -1119,6 +1286,9 @@ def generate_link():
             "emailSent": email_result.get("sent", False),
             "emailMethod": email_result.get("method", "none"),
             "emailError": email_error,
+            "emailDeliveredTo": verified_email if email_result.get("sent", False) else None,
+            "emailRequestedFor": email or None,
+            "emailForwardRequired": bool(email and email.lower() != verified_email.lower()),
             "storedIn": "firestore" if firestore_saved else "memory",
         })
 
@@ -1232,6 +1402,8 @@ def get_link(link_id):
 
 
 if __name__ == '__main__':
-    print("🚀 Starting AI Interviewer Flask backend on port 5001…")
+    port = int(os.environ.get('PORT', '5001'))
+    debug = os.environ.get('FLASK_DEBUG', '1') == '1'
+    print(f"🚀 Starting AI Interviewer Flask backend on port {port}…")
     print(f"   Gemini AI: {'✅ enabled' if GEMINI_KEY else '⚠️  disabled (set GEMINI_API_KEY)'}")
-    app.run(debug=True, port=5001)
+    app.run(debug=debug, host='0.0.0.0', port=port)

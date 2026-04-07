@@ -23,8 +23,9 @@ export default function HRReports() {
   async function loadSessions() {
     setLoading(true)
     try {
+      const q = query(collection(db, 'sessions'), where('hrId', '==', currentUser.uid))
       const snap = await Promise.race([
-        getDocs(collection(db, 'sessions')),
+        getDocs(q),
         new Promise((_, r) => setTimeout(() => r(), 5000)),
       ])
       const data = snap?.docs?.map(d => ({ id: d.id, ...d.data() })) || []

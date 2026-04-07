@@ -13,8 +13,7 @@
 import React, { useState } from 'react'
 import Modal from './Modal'
 import { useToast } from './Toast'
-
-const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
+import { apiUrl, getPublicAppOrigin } from '../lib/runtimeConfig'
 
 export default function LinkModal({
   isOpen,
@@ -70,10 +69,10 @@ export default function LinkModal({
         jobTitle: jobTitle.trim(),
         campaignId: campaignId || undefined,
         note: note.trim(),
-        frontendUrl: window.location.origin,
+        frontendUrl: getPublicAppOrigin(),
       }
 
-      const res = await fetch(`${BACKEND}/api/generate-link`, {
+      const res = await fetch(apiUrl('/api/generate-link'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -89,7 +88,11 @@ export default function LinkModal({
       onLinkCreated?.(data)
 
       if (data.emailSent) {
-        toast.success(`Email sent to ${mode === 'hr' ? email : userEmail}!`)
+        if (data.emailForwardRequired && data.emailDeliveredTo) {
+          toast.success(`Email sent to ${data.emailDeliveredTo}. Forward it to ${mode === 'hr' ? email : userEmail}.`)
+        } else {
+          toast.success(`Email sent to ${data.emailDeliveredTo || (mode === 'hr' ? email : userEmail)}!`)
+        }
       } else if (data.emailError) {
         toast.warning(`Link created but email failed: ${data.emailError}`)
       } else {
@@ -227,8 +230,16 @@ export default function LinkModal({
 
           {result.emailSent ? (
             <p style={S.successSub}>
-              Email sent to <strong>{isHR ? email : userEmail}</strong>
+              Email sent to <strong>{result.emailDeliveredTo || (isHR ? email : userEmail)}</strong>
               <span style={S.emailBadge}>via Resend</span>
+              {result.emailForwardRequired ? (
+                <>
+                  <br />
+                  <span style={{ fontSize: '12px' }}>
+                    Forward it to <strong>{result.emailRequestedFor || (isHR ? email : userEmail)}</strong>.
+                  </span>
+                </>
+              ) : null}
             </p>
           ) : result.emailError ? (
             <p style={{ ...S.successSub, color: 'var(--danger)' }}>

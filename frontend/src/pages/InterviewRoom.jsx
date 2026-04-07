@@ -7,9 +7,10 @@ import TalkingAvatar from '../components/TalkingAvatar'
 import VoiceSelector from '../components/VoiceSelector'
 import ProctoringAlert from '../components/ProctoringAlert'
 import { useToast } from '../components/Toast'
+import { apiUrl, getBackendBaseUrl, getSocketServerUrl } from '../lib/runtimeConfig'
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
-const SIGNAL  = import.meta.env.VITE_SIGNALING_URL || ''
+const BACKEND = getBackendBaseUrl()
+const SIGNAL  = getSocketServerUrl()
 const ICE     = { iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
@@ -51,6 +52,9 @@ export default function InterviewRoom() {
   const [parsingResume, setParsingResume] = useState(false)
   const [timer, setTimer]                 = useState(0)
   const [evaluation, setEvaluation]       = useState(null)
+  const [observerRoomId, setObserverRoomId] = useState(roomId)
+  const [campaignId, setCampaignId]       = useState('')
+  const [sessionStartedAt, setSessionStartedAt] = useState('')
 
   // Proctoring
   const [procWarnings, setProcWarnings]   = useState([])
@@ -208,6 +212,11 @@ export default function InterviewRoom() {
     return () => { socket.disconnect(); peerRef.current?.close() }
   }, [roomId])
 
+  useEffect(() => {
+    if (!socketConnected || !socketRef.current || !observerRoomId || observerRoomId === roomId) return
+    socketRef.current.emit('register-observer-alias', { observerRoomId, sourceRoomId: roomId })
+  }, [observerRoomId, roomId, socketConnected])
+
   const hrAudioRef = useRef(null)
 
   function createPC(remotePeerId) {
@@ -229,7 +238,18 @@ export default function InterviewRoom() {
     return pc
   }
 
+  async function getReadyLocalStream() {
+    if (localStreamRef.current?.getTracks?.().length) return localStreamRef.current
+
+    for (let i = 0; i < 20; i += 1) {
+      await new Promise(resolve => setTimeout(resolve, 200))
+      if (localStreamRef.current?.getTracks?.().length) return localStreamRef.current
+    }
+    return localStreamRef.current
+  }
+
   async function sendStreamToPeer(remotePeerId) {
+    await getReadyLocalStream()
     const pc = createPC(remotePeerId)
     const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
@@ -443,7 +463,7 @@ export default function InterviewRoom() {
 
     // Try backend TTS (Sarvam AI → gTTS fallback)
     try {
-      const res = await fetch(`${BACKEND}/api/text-to-speech`, {
+      const res = await fetch(apiUrl('/api/text-to-speech'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: qs[idx].text, language: voiceLangRef.current, gender: voiceGenderRef.current }),
@@ -490,7 +510,7 @@ export default function InterviewRoom() {
       fd.append('resume', resumeFile)
       fd.append('job_description', jobDescription)
       try {
-        const res = await fetch(`${BACKEND}/api/parse-resume`, { method: 'POST', body: fd })
+        const res = await fetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd })
         if (res.ok) {
           const data = await res.json()
           score = data.match_score ?? 50
@@ -500,12 +520,44 @@ export default function InterviewRoom() {
       } catch {}
     }
 
-    let selectedQs = []
+    const newSessionId = `sess-${Date.now()}-${Math.random().toString(36).slice(2,6)}`
+    const startedAt = new Date().toISOString()
+    let resolvedCampaignId = campaignId
+
+    setSessionId(newSessionId)
+    setSessionStartedAt(startedAt)
+
     try {
-      const res = await fetch(`${BACKEND}/api/select-questions`, {
+      const startRes = await fetch(apiUrl('/api/interview/start'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ campaign_id: roomId, match_score: score, job_title: jobTitle || 'Software Engineer', job_description: jobDescription }),
+        body: JSON.stringify({
+          session_id: newSessionId,
+          room_id: roomId,
+          candidate_id: userId,
+          candidate_email: currentUser?.email || '',
+          candidate_name: candidateName.trim(),
+          job_title: jobTitle.trim(),
+          match_score: score,
+          started_at: startedAt,
+        }),
+      })
+      if (startRes.ok) {
+        const startData = await startRes.json()
+        if (startData.campaignId) {
+          resolvedCampaignId = startData.campaignId
+          setCampaignId(startData.campaignId)
+        }
+        if (startData.observerRoomId) setObserverRoomId(startData.observerRoomId)
+      }
+    } catch {}
+
+    let selectedQs = []
+    try {
+      const res = await fetch(apiUrl('/api/select-questions'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campaign_id: resolvedCampaignId || roomId, match_score: score, job_title: jobTitle || 'Software Engineer', job_description: jobDescription }),
       })
       if (res.ok) {
         const data = await res.json()
@@ -515,7 +567,6 @@ export default function InterviewRoom() {
 
     if (!selectedQs.length) selectedQs = getDefaultQuestions()
     setQuestions(selectedQs)
-    setSessionId(`sess-${Date.now()}-${Math.random().toString(36).slice(2,6)}`)
 
     await speakQuestion(0, selectedQs)
     setPhase('interview')
@@ -599,7 +650,7 @@ export default function InterviewRoom() {
     const fd = new FormData()
     fd.append('audio', blob, `answer.${ext}`)
     try {
-      const res = await fetch(`${BACKEND}/api/transcribe`, { method: 'POST', body: fd })
+      const res = await fetch(apiUrl('/api/transcribe'), { method: 'POST', body: fd })
       if (res.ok) {
         const data = await res.json()
         if (data.text) setTextAnswer(prev => prev ? prev + ' ' + data.text : data.text)
@@ -630,7 +681,7 @@ export default function InterviewRoom() {
     socketRef.current?.emit('answer-submitted', { roomId, qIndex, answer: answerText.substring(0, 200) })
 
     // Evaluate in background
-    fetch(`${BACKEND}/api/evaluate-answer-ai`, {
+    fetch(apiUrl('/api/evaluate-answer-ai'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question: q.text, answer: answerText, model_answer: q.modelAnswer || '', rubric: q.rubric || '', session_id: sessionId, question_index: qIndex }),
@@ -656,11 +707,17 @@ export default function InterviewRoom() {
     socketRef.current?.emit('interview-ended', { roomId, answers: finalAnswers.length })
 
     try {
-      const res = await fetch(`${BACKEND}/api/generate-evaluation`, {
+      const res = await fetch(apiUrl('/api/generate-evaluation'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId,
+          room_id: roomId,
+          campaign_id: campaignId,
+          candidate_id: userId,
+          candidate_email: currentUser?.email || '',
+          match_score: matchScore,
+          started_at: sessionStartedAt,
           answers: finalAnswers,
           violations: procHistory.map(h => ({ type: h.type, timestamp: h.ts, details: h.msg })),
           duration: timer,
@@ -689,7 +746,7 @@ export default function InterviewRoom() {
       const fd = new FormData()
       fd.append('resume', file)
       fd.append('job_description', jobDescription || jobTitle)
-      const res = await fetch(`${BACKEND}/api/parse-resume`, { method: 'POST', body: fd })
+      const res = await fetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd })
       if (res.ok) {
         const data = await res.json()
         setParsedResume(data)

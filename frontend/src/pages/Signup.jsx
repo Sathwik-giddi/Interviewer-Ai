@@ -156,6 +156,9 @@ function getErrorMessage(code) {
     case 'auth/email-already-in-use': return 'An account with this email already exists.'
     case 'auth/invalid-email': return 'Invalid email address.'
     case 'auth/weak-password': return 'Password is too weak.'
+    case 'permission-denied': return 'Account was created, but profile setup in Firestore was blocked. Check Firestore rules and try signing in.'
+    case 'unavailable': return 'Firebase is temporarily unavailable. Please try again in a moment.'
+    case 'auth/network-request-failed': return 'Network error while creating the account. Check your connection and try again.'
     default: return 'Failed to create account. Please try again.'
   }
 }

@@ -4,7 +4,7 @@
  */
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { doc, getDoc, collection, query, where, getDocs, orderBy } from 'firebase/firestore'
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore'
 import { db } from '../firebase'
 
 export default function HRCampaignSessions() {
@@ -25,11 +25,16 @@ export default function HRCampaignSessions() {
       try {
         const q = query(
           collection(db, 'sessions'),
-          where('campaignId', '==', campaignId),
-          orderBy('startedAt', 'desc')
+          where('campaignId', '==', campaignId)
         )
         const snap = await getDocs(q)
-        setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        data.sort((a, b) => {
+          const da = a.startedAt?.toDate ? a.startedAt.toDate() : new Date(a.startedAt || 0)
+          const db = b.startedAt?.toDate ? b.startedAt.toDate() : new Date(b.startedAt || 0)
+          return db - da
+        })
+        setSessions(data)
       } catch (e) {
         console.error(e)
       }
@@ -118,12 +123,12 @@ export default function HRCampaignSessions() {
                 {sessions.map((s, i) => {
                   const date = s.startedAt?.toDate
                     ? s.startedAt.toDate().toLocaleDateString()
-                    : 'N/A'
+                    : (s.startedAt ? new Date(s.startedAt).toLocaleDateString() : 'N/A')
                   return (
                     <tr key={s.id} style={{ ...styles.row, background: i % 2 === 0 ? 'var(--bg)' : 'var(--bg-subtle)' }}>
                       <td style={styles.td}>
-                        <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                          {s.candidateId?.slice(0, 8)}…
+                        <span style={{ fontSize: '12px', color: s.candidateName ? 'var(--text)' : 'var(--text-muted)', fontFamily: s.candidateName ? 'inherit' : 'monospace' }}>
+                          {s.candidateName || `${s.candidateId?.slice(0, 8)}…`}
                         </span>
                       </td>
                       <td style={styles.td}>{date}</td>

@@ -6,7 +6,7 @@ const FEATURES = [
   {
     icon: <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>,
     title: 'Dynamic Question Pools',
-    desc: 'Gemini AI generates 20 role-specific questions per campaign. Candidates receive 5 tailored to their resume match score.',
+    desc: 'AI generates 20 role-specific questions per campaign. Candidates receive 5 tailored to their resume match score.',
   },
   {
     icon: <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>,
@@ -31,7 +31,7 @@ const FEATURES = [
   {
     icon: <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
     title: 'Automated Evaluation',
-    desc: 'Every answer is scored by Gemini against model answers and rubrics. A full evaluation report is generated automatically.',
+    desc: 'Every answer is scored by AI against model answers and rubrics. A full evaluation report is generated automatically.',
   },
 ]
 
@@ -91,7 +91,7 @@ export default function Landing() {
           <div style={styles.heroLeft}>
             <div className="fade-up" style={styles.heroBadge}>
               <span style={styles.heroBadgeDot} className="pulse" />
-              POWERED BY GEMINI AI
+              AI-POWERED HIRING PLATFORM
             </div>
             <h1 className="fade-up" style={styles.heroTitle}>
               THE SMARTEST<br />

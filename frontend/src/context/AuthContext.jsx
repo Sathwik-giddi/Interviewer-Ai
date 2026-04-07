@@ -15,6 +15,30 @@ const HR_EMAIL = 'hr@gmail.com'
 const HR_PASS  = 'hr@gmail.com'
 const MOCK_HR  = { uid: 'hr-admin-001', email: HR_EMAIL, displayName: 'HR Admin' }
 const STORAGE_KEY = '__ai_interviewer_mock_hr__'
+const ROLE_CACHE_KEY = '__ai_interviewer_roles__'
+
+function readRoleCache() {
+  try {
+    return JSON.parse(localStorage.getItem(ROLE_CACHE_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function writeRoleCache(cache) {
+  localStorage.setItem(ROLE_CACHE_KEY, JSON.stringify(cache))
+}
+
+function cacheUserRole(uid, role) {
+  const cache = readRoleCache()
+  cache[uid] = role
+  writeRoleCache(cache)
+}
+
+function getCachedUserRole(uid) {
+  const cache = readRoleCache()
+  return uid ? cache[uid] || null : null
+}
 
 export function AuthProvider({ children }) {
   // Check localStorage for persisted mock HR session
@@ -28,11 +52,18 @@ export function AuthProvider({ children }) {
 
   async function signup(email, password, role) {
     const cred = await createUserWithEmailAndPassword(auth, email, password)
-    await setDoc(doc(db, 'users', cred.user.uid), {
-      email,
-      role,
-      createdAt: new Date().toISOString(),
-    })
+    cacheUserRole(cred.user.uid, role)
+    try {
+      await setDoc(doc(db, 'users', cred.user.uid), {
+        email,
+        role,
+        createdAt: new Date().toISOString(),
+      })
+    } catch (error) {
+      // Keep signup usable if Auth succeeds but Firestore is temporarily blocked.
+      console.warn('Signup profile write failed; falling back to cached role.', error)
+    }
+    setCurrentUser(cred.user)
     setUserRole(role)
     return cred
   }
@@ -47,8 +78,16 @@ export function AuthProvider({ children }) {
     }
 
     const cred = await signInWithEmailAndPassword(auth, email, password)
-    const snap = await getDoc(doc(db, 'users', cred.user.uid))
-    const role = snap.exists() ? snap.data().role : 'candidate'
+    let role = getCachedUserRole(cred.user.uid) || 'candidate'
+    try {
+      const snap = await getDoc(doc(db, 'users', cred.user.uid))
+      if (snap.exists()) {
+        role = snap.data().role
+        cacheUserRole(cred.user.uid, role)
+      }
+    } catch (error) {
+      console.warn('Login role fetch failed; falling back to cached role.', error)
+    }
     setUserRole(role)
     return { cred, role }
   }
@@ -71,6 +110,8 @@ export function AuthProvider({ children }) {
       clearTimeout(timer)
       setCurrentUser(user)
       if (user) {
+        const cachedRole = getCachedUserRole(user.uid)
+        if (cachedRole) setUserRole(cachedRole)
         try {
           const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('Timeout')), 3000)
@@ -79,11 +120,19 @@ export function AuthProvider({ children }) {
             getDoc(doc(db, 'users', user.uid)),
             timeoutPromise,
           ])
-          if (snap.exists()) setUserRole(snap.data().role)
+          if (snap.exists()) {
+            const role = snap.data().role
+            cacheUserRole(user.uid, role)
+            setUserRole(role)
+          } else if (!cachedRole) {
+            setUserRole('candidate')
+          }
         } catch (e) {
           console.warn('Auth role fetch error (likely offline):', e)
           const path = window.location.pathname
-          if (path.startsWith('/hr') || path.startsWith('/observe')) {
+          if (cachedRole) {
+            setUserRole(cachedRole)
+          } else if (path.startsWith('/hr') || path.startsWith('/observe')) {
             setUserRole('hr')
           } else {
             setUserRole('candidate')

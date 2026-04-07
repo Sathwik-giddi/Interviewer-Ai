@@ -12,9 +12,10 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
 import { io } from 'socket.io-client'
+import { apiUrl, getBackendBaseUrl, getSocketServerUrl } from '../lib/runtimeConfig'
 
-const SIGNAL  = import.meta.env.VITE_SIGNALING_URL || ''
-const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
+const SIGNAL  = getSocketServerUrl()
+const BACKEND = getBackendBaseUrl()
 const ICE = { iceServers: [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
@@ -163,7 +164,13 @@ export default function HRObserverRoom() {
     const pc = new RTCPeerConnection(ICE)
     peerRef.current = pc
     pc.onicecandidate = ({ candidate }) => { if (candidate) socketRef.current?.emit('ice-candidate', { to: remotePeerId, candidate }) }
-    pc.ontrack = ({ streams }) => { if (remoteVideoRef.current && streams[0]) { remoteVideoRef.current.srcObject = streams[0]; setStreamActive(true) } }
+    pc.ontrack = ({ streams }) => {
+      if (remoteVideoRef.current && streams[0]) {
+        remoteVideoRef.current.srcObject = streams[0]
+        remoteVideoRef.current.play?.().catch(() => {})
+        setStreamActive(true)
+      }
+    }
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') setStreamActive(false)
     }
@@ -212,7 +219,7 @@ export default function HRObserverRoom() {
 
     // Generate TTS for the question via backend so candidate hears it
     try {
-      const res = await fetch(`${BACKEND}/api/text-to-speech`, {
+      const res = await fetch(apiUrl('/api/text-to-speech'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: hrQuestion }),
@@ -252,7 +259,7 @@ export default function HRObserverRoom() {
         {/* Video */}
         <div style={S.videoBox}>
           {candidatePresent ? (
-            <video ref={remoteVideoRef} autoPlay playsInline style={S.video} />
+            <video ref={remoteVideoRef} autoPlay playsInline controls style={S.video} />
           ) : (
             <div style={S.noVideo}>
               <span style={{ fontSize: '40px' }}>📹</span>

@@ -8,8 +8,7 @@ import {
   collection, addDoc, getDocs, query, where, orderBy, serverTimestamp,
 } from 'firebase/firestore'
 import { db } from '../firebase'
-
-const BACKEND = import.meta.env.VITE_BACKEND_URL || ''
+import { apiUrl } from '../lib/runtimeConfig'
 
 export default function HRDashboard() {
   const { currentUser } = useAuth()
@@ -17,6 +16,7 @@ export default function HRDashboard() {
   const toast = useToast()
   const [tab, setTab] = useState('overview')
   const [campaigns, setCampaigns] = useState([])
+  const [recentSessions, setRecentSessions] = useState([])
   const [loadingCampaigns, setLoadingCampaigns] = useState(true)
 
   const [autoRole, setAutoRole] = useState('fullstack')
@@ -37,7 +37,10 @@ export default function HRDashboard() {
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [linkRefresh, setLinkRefresh] = useState(0)
 
-  useEffect(() => { loadCampaigns() }, [currentUser])
+  useEffect(() => {
+    loadCampaigns()
+    loadRecentSessions()
+  }, [currentUser])
 
   async function loadCampaigns() {
     setLoadingCampaigns(true)
@@ -48,6 +51,24 @@ export default function HRDashboard() {
       setCampaigns(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     } catch { /* Firestore offline */ }
     setLoadingCampaigns(false)
+  }
+
+  async function loadRecentSessions() {
+    if (!currentUser?.uid) return
+    try {
+      const q = query(collection(db, 'sessions'), where('hrId', '==', currentUser.uid))
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(), 4000))
+      const snap = await Promise.race([getDocs(q), timeout])
+      const data = snap?.docs?.map(d => ({ id: d.id, ...d.data() })) || []
+      data.sort((a, b) => {
+        const da = a.startedAt?.toDate ? a.startedAt.toDate() : new Date(a.startedAt || 0)
+        const db2 = b.startedAt?.toDate ? b.startedAt.toDate() : new Date(b.startedAt || 0)
+        return db2 - da
+      })
+      setRecentSessions(data.slice(0, 6))
+    } catch {
+      setRecentSessions([])
+    }
   }
 
   function generateQuickLink() {
@@ -74,7 +95,7 @@ export default function HRDashboard() {
     setAutoGenerating(true)
     setGeneratedCampaign(null)
     try {
-      const res = await fetch(`${BACKEND}/api/auto-generate-campaign`, {
+      const res = await fetch(apiUrl('/api/auto-generate-campaign'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role_type: autoRole, title: autoTitle || undefined, experience_level: autoExp }),
@@ -106,10 +127,10 @@ export default function HRDashboard() {
         const fd = new FormData()
         fd.append('resume', resumeFile)
         fd.append('job_description', form.jobDescription)
-        const res = await fetch(`${BACKEND}/api/parse-resume`, { method: 'POST', body: fd })
+        const res = await fetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd })
         if (res.ok) { const data = await res.json(); parsedSkills = data.skills?.join(', ') || form.skills }
       }
-      const poolRes = await fetch(`${BACKEND}/api/generate-question-pool`, {
+      const poolRes = await fetch(apiUrl('/api/generate-question-pool'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ job_title: form.title, job_description: form.jobDescription, required_skills: parsedSkills, experience_years: form.experienceYears }),
@@ -137,6 +158,7 @@ export default function HRDashboard() {
     { key: 'campaigns', label: 'Campaigns' },
     { key: 'create', label: 'New Campaign' },
   ]
+  const completedSessions = recentSessions.filter(s => s.status === 'completed')
 
   return (
     <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: '#f7f6fb' }}>
@@ -159,6 +181,11 @@ export default function HRDashboard() {
             <div style={S.topStat}>
               <span style={S.topStatNum}>{campaigns.length}</span>
               <span style={S.topStatLabel}>Campaigns</span>
+            </div>
+            <div style={S.topStatDivider} />
+            <div style={S.topStat}>
+              <span style={S.topStatNum}>{completedSessions.length}</span>
+              <span style={S.topStatLabel}>Reports</span>
             </div>
           </div>
         </div>
@@ -270,6 +297,64 @@ export default function HRDashboard() {
               </div>
             )}
 
+            <div style={{ marginTop: '28px' }}>
+              <div style={S.sectionHeader}>
+                <h3 style={S.sectionTitle}>Recent Interview Activity</h3>
+                <span style={S.sectionCount}>{recentSessions.length}</span>
+              </div>
+              {recentSessions.length === 0 ? (
+                <div style={S.emptyState}>
+                  <div style={S.emptyIcon}>📋</div>
+                  <p style={S.emptyTitle}>No interview activity yet</p>
+                  <p style={S.emptySub}>Completed interviews and live sessions will appear here automatically.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {recentSessions.map(session => {
+                    const date = session.startedAt?.toDate
+                      ? session.startedAt.toDate().toLocaleString()
+                      : new Date(session.startedAt || 0).toLocaleString()
+                    const score = session.overallScore
+                    return (
+                      <div key={session.id} style={S.linkCard}>
+                        <div style={S.linkCardTop}>
+                          <div style={{ flex: 1 }}>
+                            <div style={S.linkTitle}>{session.candidateName || session.candidateEmail || session.candidateId || 'Candidate Session'}</div>
+                            <div style={S.linkMeta}>
+                              {(session.campaignTitle || session.jobTitle || 'Interview Session')} · {date}
+                            </div>
+                          </div>
+                          <span className={`badge badge-${session.status === 'completed' ? 'success' : 'warning'}`}>
+                            {session.status || 'in-progress'}
+                          </span>
+                        </div>
+                        <div style={S.linkActions}>
+                          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                            Score:{' '}
+                            <strong style={{ color: score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--warning)' : score != null ? 'var(--danger)' : 'var(--text-muted)' }}>
+                              {score ?? 'Pending'}
+                            </strong>
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            {session.campaignId && (
+                              <button style={S.watchBtn} onClick={() => navigate(`/observe/${session.campaignId}`)}>
+                                Watch Live
+                              </button>
+                            )}
+                            {session.status === 'completed' && (
+                              <button style={S.secondaryBtn} onClick={() => navigate(`/report/${session.id}`)}>
+                                View Report
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Emailed Links (from backend) */}
             <div style={{ marginTop: '28px' }}>
               <div style={S.sectionHeader}>
@@ -310,7 +395,7 @@ export default function HRDashboard() {
               <h3 style={S.sectionTitle}>Create Campaign</h3>
             </div>
             <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '20px' }}>
-              Create a full campaign with AI-generated questions from 1,400+ curated questions + Gemini.
+              Create a full campaign with AI-generated questions from 1,400+ curated questions.
             </p>
             <div style={S.formCard}>
               <form onSubmit={handleCreate}>
