@@ -48,8 +48,8 @@ export default function HRCampaignSessions() {
     : null
 
   return (
-    <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
-      <div className="container" style={{ padding: '32px 24px' }}>
+    <div className="page-enter app-page dashboard-page sessions-page" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
+      <div className="container page-shell" style={{ padding: '32px 24px' }}>
 
         {/* Back + Header */}
         <button className="btn btn-ghost" style={{ marginBottom: '20px', fontSize: '13px' }} onClick={() => navigate('/hr')}>
@@ -58,14 +58,14 @@ export default function HRCampaignSessions() {
 
         {campaign && (
           <>
-            <div style={styles.pageHeader}>
+            <div style={styles.pageHeader} className="page-header">
               <div>
                 <h1 style={styles.pageTitle}>{campaign.title}</h1>
                 <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginTop: '4px' }}>
                   {campaign.requiredSkills} · {campaign.experienceYears} yrs experience
                 </p>
               </div>
-              <div style={styles.statRow}>
+              <div style={styles.statRow} className="responsive-toolbar">
                 <div style={styles.stat}>
                   <span style={styles.statNum}>{sessions.length}</span>
                   <span style={styles.statLabel}>Candidates</span>
@@ -106,7 +106,7 @@ export default function HRCampaignSessions() {
             </p>
           </div>
         ) : (
-          <div style={styles.tableWrapper}>
+          <div style={styles.tableWrapper} className="table-scroll">
             <table style={styles.table}>
               <thead>
                 <tr style={styles.thead}>

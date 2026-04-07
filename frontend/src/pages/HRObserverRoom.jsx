@@ -242,9 +242,9 @@ export default function HRObserverRoom() {
   const is = interviewState
 
   return (
-    <div className="page-enter" style={S.page}>
+    <div className="page-enter app-page observer-room" style={S.page}>
       {/* ═══ LEFT: Video + Controls ═══ */}
-      <div style={S.leftPanel}>
+      <div style={S.leftPanel} className="observer-room__sidebar">
         {/* Status */}
         <div style={S.statusBar}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -327,7 +327,7 @@ export default function HRObserverRoom() {
       </div>
 
       {/* ═══ RIGHT: Tabs ═══ */}
-      <div style={S.rightPanel}>
+      <div style={S.rightPanel} className="observer-room__main">
         {/* Tab bar */}
         <div style={S.tabBar}>
           {['live', 'proctoring', 'log'].map(t => (
@@ -339,7 +339,7 @@ export default function HRObserverRoom() {
           ))}
         </div>
 
-        <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
+        <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }} className="observer-room__content">
 
           {/* ── LIVE TAB ── */}
           {rightTab === 'live' && (

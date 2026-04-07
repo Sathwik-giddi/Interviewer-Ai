@@ -58,11 +58,11 @@ export default function CandidateDashboard() {
   const firstName = currentUser.displayName?.split(' ')[0] || currentUser.email?.split('@')[0] || 'there'
 
   return (
-    <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: '#f5f3ff' }}>
-      <div className="container" style={{ padding: '32px 24px', maxWidth: '1100px' }}>
+    <div className="page-enter app-page dashboard-page candidate-dashboard" style={{ minHeight: 'calc(100vh - 60px)', background: '#f5f3ff' }}>
+      <div className="container page-shell" style={{ padding: '32px 24px', maxWidth: '1100px' }}>
 
         {/* ── Hero Banner ── */}
-        <div style={S.heroBanner}>
+        <div style={S.heroBanner} className="dashboard-hero">
           <div style={S.heroContent}>
             <div style={S.heroAvatar}>
               {firstName[0].toUpperCase()}
@@ -83,7 +83,7 @@ export default function CandidateDashboard() {
         </div>
 
         {/* ── Stats Row ── */}
-        <div style={S.statsRow}>
+        <div style={S.statsRow} className="stats-grid stats-grid--4">
           {[
             { label: 'Total Interviews', value: sessions.length, color: 'var(--primary)', icon: '📋' },
             { label: 'Completed', value: completed.length, color: '#22c55e', icon: '✅' },
@@ -115,7 +115,7 @@ export default function CandidateDashboard() {
                 <p style={S.actionDesc}>Paste your interview link to begin</p>
               </div>
             </div>
-            <form onSubmit={handleJoin} style={S.joinForm}>
+            <form onSubmit={handleJoin} style={S.joinForm} className="join-form">
               <div style={S.joinInputWrap}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                   <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
@@ -134,7 +134,7 @@ export default function CandidateDashboard() {
             </form>
           </div>
 
-          <div style={S.actionsGrid}>
+          <div style={S.actionsGrid} className="three-col-grid">
           {/* Practice */}
           <div style={S.actionCard} onClick={() => navigate('/mock')} role="button" tabIndex={0}>
             <div style={{ ...S.actionAccent, background: 'linear-gradient(135deg, #7353F6, #a78bfa)' }} />
@@ -198,7 +198,7 @@ export default function CandidateDashboard() {
             <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginBottom: '20px' }}>
               Join a campaign or start a mock interview to get started.
             </p>
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+            <div className="responsive-actions" style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
               <Link to="/mock" className="btn btn-primary" style={{ padding: '10px 24px' }}>Practice Now</Link>
             </div>
           </div>

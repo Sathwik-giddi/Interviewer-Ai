@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
@@ -19,11 +19,17 @@ export default function Navbar() {
   const { currentUser, userRole, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const [menuOpen, setMenuOpen] = useState(false)
 
   async function handleLogout() {
     await logout()
+    setMenuOpen(false)
     navigate('/')
   }
+
+  useEffect(() => {
+    setMenuOpen(false)
+  }, [location.pathname])
 
   const roleLinks = userRole === 'hr' ? hrLinks : userRole === 'candidate' ? candidateLinks : []
 
@@ -33,15 +39,27 @@ export default function Navbar() {
   }
 
   return (
-    <nav style={styles.nav}>
-      <div className="container" style={styles.inner}>
+    <nav style={styles.nav} className="site-nav">
+      <div className="container site-nav__inner" style={styles.inner}>
         <Link to={currentUser ? (userRole === 'hr' ? '/hr' : '/candidate') : '/'} style={styles.logo}>
           <span style={styles.logoIcon}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           </span>
           AI<span style={{ color: 'var(--primary)' }}>INTERVIEWER</span>
         </Link>
-        <div style={styles.links}>
+        <button
+          type="button"
+          aria-label="Toggle navigation"
+          aria-expanded={menuOpen}
+          className="site-nav__toggle"
+          style={styles.toggle}
+          onClick={() => setMenuOpen(open => !open)}
+        >
+          <span style={styles.toggleBar} />
+          <span style={styles.toggleBar} />
+          <span style={styles.toggleBar} />
+        </button>
+        <div style={styles.links} className={`site-nav__links${menuOpen ? ' is-open' : ''}`}>
           {!currentUser && (
             <>
               <Link to="/login" className="btn btn-ghost" style={styles.navBtn}>Login</Link>
@@ -95,7 +113,10 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    height: '60px',
+    minHeight: '60px',
+    gap: '12px',
+    position: 'relative',
+    paddingBlock: '8px',
   },
   logo: {
     fontFamily: 'var(--font-head)',
@@ -119,6 +140,7 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
+    flexWrap: 'wrap',
   },
   navLink: {
     padding: '7px 14px',
@@ -137,5 +159,24 @@ const styles = {
   navBtn: {
     padding: '8px 16px',
     fontSize: '13px',
+  },
+  toggle: {
+    display: 'none',
+    width: '44px',
+    height: '44px',
+    background: 'transparent',
+    border: '1px solid var(--border)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'column',
+    gap: '4px',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  toggleBar: {
+    width: '18px',
+    height: '2px',
+    background: 'var(--text)',
+    display: 'block',
   },
 }

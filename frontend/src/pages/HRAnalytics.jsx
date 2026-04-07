@@ -107,15 +107,15 @@ export default function HRAnalytics() {
   }
 
   return (
-    <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
-      <div className="container" style={{ padding: '32px 24px' }}>
+    <div className="page-enter app-page dashboard-page analytics-page" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
+      <div className="container page-shell" style={{ padding: '32px 24px' }}>
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', flexWrap: 'wrap', gap: '16px' }}>
+        <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px', flexWrap: 'wrap', gap: '16px' }}>
           <div>
             <h1 style={{ fontFamily: 'var(--font-head)', fontSize: '36px' }}>ANALYTICS</h1>
             <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Interview performance metrics and insights</p>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div className="responsive-toolbar" style={{ display: 'flex', gap: '8px' }}>
             {['all', '7d', '30d'].map(r => (
               <button key={r} className={`btn ${dateRange === r ? 'btn-primary' : 'btn-ghost'}`} style={{ fontSize: '12px' }} onClick={() => setDateRange(r)}>
                 {r === 'all' ? 'All Time' : r === '7d' ? 'Last 7 Days' : 'Last 30 Days'}
@@ -128,7 +128,7 @@ export default function HRAnalytics() {
         </div>
 
         {/* Stat Cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
+        <div className="stats-grid stats-grid--4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
           {[
             { label: 'Total Interviews', value: totalCandidates, color: 'var(--primary)' },
             { label: 'Avg Score', value: `${avgScore}/100`, color: avgScore >= 60 ? '#22c55e' : '#eab308' },
@@ -143,7 +143,7 @@ export default function HRAnalytics() {
         </div>
 
         {/* Charts Row */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '32px' }}>
+        <div className="split-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '32px' }}>
           {/* Score Distribution */}
           <div className="card">
             <h3 style={{ fontFamily: 'var(--font-head)', fontSize: '18px', marginBottom: '16px' }}>SCORE DISTRIBUTION</h3>
@@ -186,7 +186,7 @@ export default function HRAnalytics() {
         </div>
 
         {/* Quick Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+        <div className="three-col-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
           <div className="card" style={{ textAlign: 'center' }}>
             <p style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>HIRED</p>
             <p style={{ fontFamily: 'var(--font-head)', fontSize: '32px', color: '#22c55e' }}>{hireCount}</p>

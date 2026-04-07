@@ -1,0 +1,427 @@
+/* Responsive overrides only. Existing visual identity stays intact. */
+
+.app-page {
+  min-width: 0;
+}
+
+.page-shell,
+.table-scroll,
+.dashboard-card,
+.responsive-card {
+  max-width: 100%;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.touch-target {
+  min-height: var(--touch-target);
+  min-width: var(--touch-target);
+}
+
+.responsive-actions,
+.responsive-toolbar,
+.filter-row,
+.action-row,
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.stats-grid,
+.two-col-grid,
+.three-col-grid,
+.four-col-grid,
+.cards-grid,
+.split-grid {
+  display: grid;
+  gap: clamp(0.75rem, 2vw, 1.5rem);
+}
+
+.two-col-grid,
+.split-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.three-col-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.four-col-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.cards-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+}
+
+.page-header,
+.dashboard-hero,
+.section-toolbar,
+.section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.auth-layout {
+  display: grid;
+  grid-template-columns: minmax(18rem, 23.75rem) minmax(0, 1fr);
+  width: min(100%, 54rem);
+}
+
+.auth-page .auth-main,
+.auth-page .auth-aside {
+  min-width: 0;
+}
+
+.auth-page .auth-main {
+  padding: clamp(1.25rem, 3vw, 2.75rem) !important;
+}
+
+.auth-page .auth-aside {
+  padding: clamp(1.5rem, 4vw, 3rem) !important;
+}
+
+.landing-hero {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: center;
+}
+
+.landing-link-row,
+.landing-link-actions,
+.join-form,
+.report-actions,
+.session-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.landing-comparison-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  gap: 0;
+}
+
+.profile-layout {
+  display: grid;
+  grid-template-columns: minmax(15rem, 17.5rem) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.interview-room,
+.observer-room {
+  display: grid;
+  min-height: calc(100vh - 60px);
+  overflow: hidden;
+}
+
+.interview-room {
+  grid-template-columns: minmax(17rem, 20rem) minmax(0, 1fr);
+}
+
+.observer-room {
+  grid-template-columns: minmax(19rem, 23.75rem) minmax(0, 1fr);
+}
+
+.interview-room__sidebar,
+.observer-room__sidebar {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.interview-room__main,
+.observer-room__main {
+  min-width: 0;
+}
+
+.dashboard-table,
+.link-table,
+.candidate-table,
+.report-table {
+  min-width: 42rem;
+}
+
+.link-list__row,
+.link-list__header {
+  min-width: 0;
+}
+
+.mobile-hidden {
+  display: initial;
+}
+
+.site-nav__links {
+  min-width: 0;
+}
+
+.site-nav__toggle {
+  display: none !important;
+}
+
+.landing-page input[readonly],
+.landing-page code,
+.dashboard-table,
+.report-table,
+.candidate-table,
+.link-table,
+.sessions-page table {
+  word-break: break-all;
+}
+
+.candidate-dashboard .sessionCard,
+.candidate-dashboard .session-card {
+  min-width: 0;
+}
+
+.profile-page .profile-sidebar,
+.profile-page .profile-content {
+  min-width: 0;
+}
+
+.report-view-page svg,
+.reports-page svg,
+.analytics-page svg {
+  height: auto;
+}
+
+/* 576px+ small phones / large phones */
+@media (max-width: 575.98px) {
+  .container {
+    padding-inline: 1rem;
+  }
+
+  .landing-link-row,
+  .landing-link-actions,
+  .join-form,
+  .report-actions,
+  .session-actions,
+  .responsive-toolbar,
+  .responsive-actions,
+  .filter-row,
+  .action-row,
+  .button-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .landing-link-row > *,
+  .landing-link-actions > *,
+  .join-form > *,
+  .report-actions > *,
+  .session-actions > *,
+  .responsive-toolbar > *,
+  .responsive-actions > *,
+  .filter-row > *,
+  .action-row > *,
+  .button-row > * {
+    width: 100%;
+  }
+
+  .mobile-hidden {
+    display: none !important;
+  }
+
+  .landing-page h1,
+  .auth-page h1,
+  .auth-page h2,
+  .dashboard-page h1 {
+    font-size: clamp(2rem, 10vw, 3rem) !important;
+  }
+}
+
+/* 768px breakpoint: stack two-column layouts */
+@media (max-width: 767.98px) {
+  .auth-layout,
+  .landing-hero,
+  .landing-comparison-grid,
+  .profile-layout,
+  .interview-room,
+  .observer-room,
+  .two-col-grid,
+  .split-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .landing-comparison-grid > :nth-child(2) {
+    display: none;
+  }
+
+  .interview-room,
+  .observer-room {
+    min-height: auto;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .interview-room__sidebar,
+  .observer-room__sidebar,
+  .interview-room__main,
+  .observer-room__main {
+    overflow: visible !important;
+  }
+
+  .interview-room__sidebar,
+  .observer-room__sidebar {
+    border-right: none !important;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stats-grid,
+  .three-col-grid,
+  .four-col-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .page-header,
+  .dashboard-hero,
+  .section-toolbar,
+  .section-header {
+    align-items: stretch;
+  }
+
+  .auth-page .auth-aside {
+    min-height: 14rem;
+  }
+
+  .profile-page .profile-sidebar {
+    position: static !important;
+  }
+
+  .dashboard-table,
+  .link-table,
+  .candidate-table,
+  .report-table,
+  .sessions-page table {
+    min-width: 38rem;
+  }
+
+  .interview-room__main,
+  .observer-room__content {
+    padding: 1rem !important;
+  }
+}
+
+/* 992px breakpoint: tablet / small laptop */
+@media (max-width: 991.98px) {
+  .auth-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .auth-aside {
+    min-height: 15rem;
+  }
+
+  .stats-grid.stats-grid--4,
+  .four-col-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .three-col-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .site-nav__toggle {
+    display: inline-flex !important;
+  }
+
+  .site-nav__inner {
+    align-items: center;
+  }
+
+  .site-nav__links {
+    display: none !important;
+    position: absolute;
+    top: calc(100% + 1px);
+    left: 0;
+    right: 0;
+    z-index: 110;
+    flex-direction: column;
+    align-items: stretch !important;
+    padding: 1rem;
+    background: #fff;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+  }
+
+  .site-nav__links.is-open {
+    display: flex !important;
+  }
+
+  .site-nav__links > * {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .responsive-table-grid {
+    overflow-x: auto;
+  }
+
+  .interview-room,
+  .observer-room {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: auto;
+  }
+
+  .interview-room__main,
+  .observer-room__content {
+    padding: 1.25rem !important;
+  }
+
+  .candidate-dashboard .dashboard-hero,
+  .hr-dashboard .dashboard-hero,
+  .reports-page .page-header,
+  .analytics-page .page-header,
+  .candidates-page .page-header,
+  .sessions-page .page-header,
+  .report-view-page .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .candidate-dashboard .join-form > :last-child,
+  .hr-dashboard .responsive-toolbar > .btn,
+  .mock-page .responsive-actions > .btn {
+    width: 100%;
+  }
+}
+
+/* 1200px breakpoint: standard laptop */
+@media (max-width: 1199.98px) {
+  .stats-grid.stats-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 1400px breakpoint: wide desktop tuning */
+@media (min-width: 1400px) {
+  .container {
+    width: min(100%, 88rem);
+  }
+
+  .dashboard-card,
+  .responsive-card {
+    min-width: 0;
+  }
+}
+
+/* 1920px+ 4K screens */
+@media (min-width: 1920px) {
+  :root {
+    --max-width: 1500px;
+  }
+
+  body {
+    font-size: clamp(1rem, 0.92rem + 0.25vw, 1.125rem);
+  }
+}

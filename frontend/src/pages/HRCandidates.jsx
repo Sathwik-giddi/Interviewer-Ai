@@ -134,15 +134,15 @@ export default function HRCandidates() {
   }
 
   return (
-    <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
-      <div className="container" style={{ padding: '32px 24px' }}>
+    <div className="page-enter app-page dashboard-page candidates-page" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
+      <div className="container page-shell" style={{ padding: '32px 24px' }}>
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+        <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
           <div>
             <h1 style={{ fontFamily: 'var(--font-head)', fontSize: '36px' }}>CANDIDATES</h1>
             <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{candidates.length} total candidates</p>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div className="responsive-toolbar" style={{ display: 'flex', gap: '8px' }}>
             <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
               {showForm ? '✕ Close' : '+ Add Candidate'}
             </button>
@@ -155,7 +155,7 @@ export default function HRCandidates() {
           <div className="card" style={{ marginBottom: '24px' }}>
             <h3 style={{ fontFamily: 'var(--font-head)', fontSize: '20px', marginBottom: '16px' }}>ADD CANDIDATE</h3>
             <form onSubmit={handleAddCandidate}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div className="split-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div className="form-group">
                   <label>Name *</label>
                   <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="John Doe" required />
@@ -186,7 +186,7 @@ export default function HRCandidates() {
               {/* ATS Result */}
               {parsedResume && (
                 <div style={{ padding: '14px', border: `2px solid ${parsedResume.match_score >= 60 ? '#22c55e' : '#dc2626'}`, background: parsedResume.match_score >= 60 ? '#f0fdf4' : '#fef2f2', marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <span style={{ fontWeight: 700, fontSize: '14px' }}>
                       {parsedResume.match_score >= 60 ? '✅ ELIGIBLE' : '❌ BELOW THRESHOLD'}
                     </span>
@@ -217,7 +217,7 @@ export default function HRCandidates() {
         )}
 
         {/* Filters */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+        <div className="filter-row" style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
           {[['all', 'All'], ['eligible', 'Eligible'], ['rejected', 'Rejected'], ['pending', 'Pending']].map(([k, l]) => (
             <button key={k} className={`btn ${filter === k ? 'btn-primary' : 'btn-ghost'}`} style={{ fontSize: '12px' }} onClick={() => setFilter(k)}>
               {l} ({candidates.filter(c => k === 'all' ? true : c.status === k).length})
@@ -232,12 +232,12 @@ export default function HRCandidates() {
             <p style={{ color: 'var(--text-muted)', marginTop: '12px' }}>No candidates yet. Click "Add Candidate" to get started.</p>
           </div>
         ) : (
-          <div style={{ border: '1px solid var(--border)' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 150px', padding: '12px 16px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+          <div style={{ border: '1px solid var(--border)' }} className="table-scroll candidate-table">
+            <div className="dashboard-table" style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 150px', padding: '12px 16px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
               <span>Name</span><span>Email</span><span>ATS Score</span><span>Status</span><span>Skills</span><span>Actions</span>
             </div>
             {filtered.map(c => (
-              <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 150px', padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: '13px', alignItems: 'center' }}>
+              <div key={c.id} className="dashboard-table" style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 150px', padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: '13px', alignItems: 'center' }}>
                 <span style={{ fontWeight: 600 }}>{c.name}</span>
                 <span style={{ color: 'var(--text-muted)' }}>{c.email}</span>
                 <span style={{ fontWeight: 700, color: (c.atsScore || 0) >= 60 ? '#22c55e' : (c.atsScore || 0) >= 40 ? '#eab308' : '#dc2626' }}>
@@ -249,7 +249,7 @@ export default function HRCandidates() {
                   </span>
                 </span>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{(c.skills || []).slice(0, 3).join(', ')}</span>
-                <div style={{ display: 'flex', gap: '4px' }}>
+                <div className="responsive-actions" style={{ display: 'flex', gap: '4px' }}>
                   {c.status === 'eligible' && !c.interviewLink && (
                     <button className="btn btn-primary" style={{ fontSize: '11px', padding: '4px 8px' }} onClick={() => scheduleInterview(c)}>Schedule</button>
                   )}

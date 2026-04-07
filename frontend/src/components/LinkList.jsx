@@ -81,9 +81,9 @@ export default function LinkList({ userId, mode = 'hr', refresh = 0 }) {
   const isHR = mode === 'hr'
 
   return (
-    <div style={S.wrapper}>
+    <div style={S.wrapper} className="table-scroll link-table">
       {/* Header row */}
-      <div style={{ ...S.row, ...S.headerRow, gridTemplateColumns: isHR ? '2fr 1.5fr 1fr 1.5fr 1fr 140px' : '1fr 2fr 1fr 140px' }}>
+      <div className="link-list__header dashboard-table" style={{ ...S.row, ...S.headerRow, gridTemplateColumns: isHR ? '2fr 1.5fr 1fr 1.5fr 1fr 140px' : '1fr 2fr 1fr 140px' }}>
         {isHR && <span style={S.headerCell}>Candidate</span>}
         {isHR && <span style={S.headerCell}>Job Title</span>}
         <span style={S.headerCell}>Type</span>
@@ -94,7 +94,7 @@ export default function LinkList({ userId, mode = 'hr', refresh = 0 }) {
 
       {/* Data rows */}
       {links.map(link => (
-        <div key={link.linkId} style={{ ...S.row, gridTemplateColumns: isHR ? '2fr 1.5fr 1fr 1.5fr 1fr 140px' : '1fr 2fr 1fr 140px' }}>
+        <div key={link.linkId} className="link-list__row dashboard-table" style={{ ...S.row, gridTemplateColumns: isHR ? '2fr 1.5fr 1fr 1.5fr 1fr 140px' : '1fr 2fr 1fr 140px' }}>
           {isHR && (
             <span style={S.cell}>
               <span style={{ fontWeight: 600 }}>{link.candidateName || '—'}</span>
@@ -127,7 +127,7 @@ export default function LinkList({ userId, mode = 'hr', refresh = 0 }) {
             }} />
             <span style={{ fontSize: '12px' }}>{link.used ? 'Used' : 'Pending'}</span>
           </span>
-          <span style={{ ...S.cell, justifyContent: 'flex-end', gap: '6px' }}>
+          <span style={{ ...S.cell, justifyContent: 'flex-end', gap: '6px' }} className="responsive-actions">
             <button style={S.actionBtn} onClick={() => copyLink(link.fullLink)} title="Copy link">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -152,7 +152,7 @@ export default function LinkList({ userId, mode = 'hr', refresh = 0 }) {
 
 const S = {
   wrapper: {
-    border: '1px solid var(--border)', overflow: 'hidden',
+    border: '1px solid var(--border)', overflowX: 'auto', overflowY: 'hidden',
   },
   row: {
     display: 'grid',

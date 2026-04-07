@@ -42,8 +42,8 @@ export default function ATSReport() {
   }
 
   return (
-    <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
-      <div className="container" style={{ padding: '32px 24px', maxWidth: '800px' }}>
+    <div className="page-enter app-page dashboard-page ats-page" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
+      <div className="container page-shell" style={{ padding: '32px 24px', maxWidth: '800px' }}>
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <span style={{ fontSize: '48px' }}>📊</span>
           <h1 style={{ fontFamily: 'var(--font-head)', fontSize: '36px', marginTop: '12px' }}>ATS SCORE REPORT</h1>
@@ -132,7 +132,7 @@ export default function ATSReport() {
             </div>
 
             {/* Skills Breakdown */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+            <div className="split-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
               {/* Matched Skills */}
               <div className="card">
                 <p style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#22c55e', marginBottom: '12px' }}>
@@ -184,7 +184,7 @@ export default function ATSReport() {
 
             {/* Experience & AI Feedback */}
             <div className="card" style={{ marginBottom: '16px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+              <div className="split-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
                 <div>
                   <p style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '4px' }}>EXPERIENCE</p>
                   <p style={{ fontFamily: 'var(--font-head)', fontSize: '28px' }}>
@@ -209,7 +209,7 @@ export default function ATSReport() {
             </div>
 
             {/* Action Buttons */}
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+            <div className="responsive-actions" style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
               <button className="btn btn-primary" onClick={() => { setReport(null); setResumeFile(null) }}>
                 Analyze Another Resume
               </button>

@@ -151,11 +151,11 @@ export default function ReportView() {
   }
 
   return (
-    <div className="page-enter" style={{ background: 'var(--bg-subtle)', minHeight: 'calc(100vh - 60px)' }}>
-      <div className="container" style={{ padding: '40px 24px', maxWidth: '900px' }}>
+    <div className="page-enter app-page dashboard-page report-view-page" style={{ background: 'var(--bg-subtle)', minHeight: 'calc(100vh - 60px)' }}>
+      <div className="container page-shell" style={{ padding: '40px 24px', maxWidth: '900px' }}>
 
         {/* Header */}
-        <div style={styles.header}>
+        <div style={styles.header} className="page-header">
           <div style={{ flex: 1 }}>
             <p style={styles.label}>Evaluation Report</p>
             <h1 style={styles.title}>{jobTitle}</h1>
@@ -199,7 +199,7 @@ export default function ReportView() {
 
         {/* Strengths & Weaknesses */}
         {(strengths.length > 0 || weaknesses.length > 0) && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+          <div className="split-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
             <div className="card">
               <h3 style={styles.sectionTitle}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2" style={{ verticalAlign: 'text-bottom', marginRight: '6px' }}>
@@ -229,7 +229,7 @@ export default function ReportView() {
 
         {/* Match score */}
         {session.matchScore !== undefined && (
-          <div className="card" style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div className="card responsive-actions" style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '20px' }}>
             <div>
               <p style={styles.label}>Resume Match Score</p>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: '4px', marginTop: '4px' }}>

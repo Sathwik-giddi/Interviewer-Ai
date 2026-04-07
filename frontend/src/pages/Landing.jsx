@@ -85,10 +85,10 @@ export default function Landing() {
     : '/signup'
 
   return (
-    <div className="page-enter">
+    <div className="page-enter app-page landing-page">
       {/* HERO */}
       <section style={styles.hero}>
-        <div className="container" style={styles.heroInner}>
+        <div className="container landing-hero" style={styles.heroInner}>
           <div style={styles.heroLeft}>
             <div className="fade-up" style={styles.heroBadge}>
               <span style={styles.heroBadgeDot} className="pulse" />
@@ -103,7 +103,7 @@ export default function Landing() {
               Automated resume parsing, dynamic question pools, live proctoring,
               and instant evaluation reports — all in one platform.
             </p>
-            <div className="fade-up" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <div className="fade-up responsive-actions" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
               <Link to={ctaHref} className="btn btn-primary" style={{ fontSize: '15px', padding: '14px 32px' }}>
                 Get Started Free
               </Link>
@@ -111,7 +111,7 @@ export default function Landing() {
                 See Features
               </a>
             </div>
-            <div className="fade-up" style={styles.trustRow}>
+            <div className="fade-up responsive-toolbar" style={styles.trustRow}>
               <div style={styles.trustAvatars}>
                 {['#7353F6', '#38a169', '#d97706'].map((c, i) => (
                   <div key={i} style={{ ...styles.trustAvatar, background: c, marginLeft: i > 0 ? '-8px' : 0, zIndex: 3 - i }}>
@@ -166,11 +166,11 @@ export default function Landing() {
             </button>
           </div>
           {generatedLink && (
-            <div className="fade-up visible" style={styles.linkBox}>
+            <div className="fade-up visible responsive-card" style={styles.linkBox}>
               <p style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '10px' }}>
                 YOUR INTERVIEW LINK
               </p>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div className="landing-link-row" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <input
                   readOnly
                   value={generatedLink}
@@ -181,7 +181,7 @@ export default function Landing() {
                   {copied ? 'Copied!' : 'Copy'}
                 </button>
               </div>
-              <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+              <div className="landing-link-actions" style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
                 <button className="btn btn-primary" style={{ flex: 1, justifyContent: 'center', fontSize: '13px' }} onClick={() => navigate(routePathFromAppUrl(generatedLink))}>
                   Join as Candidate
                 </button>
@@ -213,7 +213,7 @@ export default function Landing() {
               EVERYTHING YOU NEED
             </h2>
           </div>
-          <div style={styles.featureGrid}>
+          <div className="cards-grid" style={styles.featureGrid}>
             {FEATURES.map((f, i) => (
               <div key={i} className="fade-up" style={styles.featureCard}>
                 <div style={styles.featureIcon}>{f.icon}</div>
@@ -233,7 +233,7 @@ export default function Landing() {
               WHY DIFFERENT?
             </h2>
           </div>
-          <div style={styles.compGrid}>
+          <div className="landing-comparison-grid" style={styles.compGrid}>
             <div style={styles.compCol}>
               <div style={styles.compHeader}>Others</div>
               {COMPARISON.map(([old], i) => (

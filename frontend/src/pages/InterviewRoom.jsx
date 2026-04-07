@@ -814,7 +814,7 @@ export default function InterviewRoom() {
 
   // ── MAIN ROOM ──
   return (
-    <div className="page-enter" style={S.roomWrapper}>
+    <div className="page-enter app-page interview-room" style={S.roomWrapper}>
       {/* ═══ PROCTORING ALERT ═══ */}
       <ProctoringAlert
         sessionId={sessionId}
@@ -825,7 +825,7 @@ export default function InterviewRoom() {
         roomId={roomId}
       />
       {/* ═══ LEFT PANEL ═══ */}
-      <div style={S.leftPanel}>
+      <div style={S.leftPanel} className="interview-room__sidebar">
         <div style={S.statusBar}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ ...S.dot, background: socketConnected ? '#22c55e' : '#ccc' }} className={socketConnected ? 'pulse' : ''} />
@@ -940,7 +940,7 @@ export default function InterviewRoom() {
       </div>
 
       {/* ═══ RIGHT PANEL ═══ */}
-      <div style={S.rightPanel}>
+      <div style={S.rightPanel} className="interview-room__main">
         {/* ROOM LOCKED */}
         {roomLocked && (
           <div style={{ textAlign: 'center', padding: '80px 20px' }}>

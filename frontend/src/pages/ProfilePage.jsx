@@ -97,12 +97,12 @@ export default function ProfilePage() {
     : [{ id: 'personal', label: 'Personal Info' }, { id: 'security', label: 'Security' }]
 
   return (
-    <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: '#f5f3ff' }}>
-      <div className="container" style={{ padding: '32px 24px', maxWidth: '960px' }}>
+    <div className="page-enter app-page dashboard-page profile-page" style={{ minHeight: 'calc(100vh - 60px)', background: '#f5f3ff' }}>
+      <div className="container page-shell" style={{ padding: '32px 24px', maxWidth: '960px' }}>
 
-        <div style={S.layout}>
+        <div style={S.layout} className="profile-layout">
           {/* ── Left Sidebar ── */}
-          <div style={S.sidebar}>
+          <div style={S.sidebar} className="profile-sidebar">
             {/* Avatar card */}
             <div style={S.avatarCard}>
               <div style={S.avatarCircle}>{initials}</div>
@@ -145,7 +145,7 @@ export default function ProfilePage() {
           </div>
 
           {/* ── Right Content ── */}
-          <div style={S.content}>
+          <div style={S.content} className="profile-content">
             <form onSubmit={handleSave}>
 
               {/* Personal Info Tab */}

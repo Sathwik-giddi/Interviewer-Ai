@@ -249,7 +249,7 @@ export default function MockInterview() {
     const score = evaluation?.overallScore || 0
     const scoreColor = score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--warning)' : 'var(--danger)'
     return (
-      <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: '#f5f3ff', padding: '32px 16px' }}>
+      <div className="page-enter app-page dashboard-page mock-page" style={{ minHeight: 'calc(100vh - 60px)', background: '#f5f3ff', padding: '32px 16px' }}>
         <div style={{ maxWidth: '680px', margin: '0 auto' }}>
           {/* Score hero */}
           <div style={{ textAlign: 'center', marginBottom: '32px', padding: '40px 24px', background: '#fff', border: '1px solid var(--border)',  }}>
@@ -295,7 +295,7 @@ export default function MockInterview() {
             </div>
           ))}
 
-          <div style={{ display: 'flex', gap: '12px', marginTop: '24px', justifyContent: 'center' }}>
+          <div className="responsive-actions" style={{ display: 'flex', gap: '12px', marginTop: '24px', justifyContent: 'center' }}>
             <button className="btn btn-primary" onClick={() => { setPhase('setup'); setAnswers([]); setQIndex(0); setEvaluation(null) }}>Try Again</button>
             <button className="btn btn-outline" onClick={() => navigate('/candidate')}>Dashboard</button>
           </div>
@@ -306,8 +306,8 @@ export default function MockInterview() {
 
   // ── SETUP & INTERVIEW ──
   return (
-    <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: '#f5f3ff' }}>
-      <div className="container" style={{ padding: '32px 24px', maxWidth: '720px' }}>
+    <div className="page-enter app-page dashboard-page mock-page" style={{ minHeight: 'calc(100vh - 60px)', background: '#f5f3ff' }}>
+      <div className="container page-shell" style={{ padding: '32px 24px', maxWidth: '720px' }}>
 
         {phase === 'setup' && (
           <>
@@ -326,7 +326,7 @@ export default function MockInterview() {
               </div>
               <div className="form-group">
                 <label>Difficulty</label>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div className="responsive-actions" style={{ display: 'flex', gap: '8px' }}>
                   {[
                     { key: 'basic', label: 'Basic', color: 'var(--success)' },
                     { key: 'intermediate', label: 'Intermediate', color: 'var(--warning)' },

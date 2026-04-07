@@ -121,13 +121,13 @@ export default function HRReports() {
     const date = s.startedAt?.toDate ? s.startedAt.toDate().toLocaleString() : 'N/A'
 
     return (
-      <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
-        <div className="container" style={{ padding: '32px 24px', maxWidth: '800px' }}>
+      <div className="page-enter app-page dashboard-page reports-page" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
+        <div className="container page-shell" style={{ padding: '32px 24px', maxWidth: '800px' }}>
           <button className="btn btn-ghost" style={{ marginBottom: '16px' }} onClick={() => setSelectedSession(null)}>
             ← Back to Reports
           </button>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+          <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
             <div>
               <h1 style={{ fontFamily: 'var(--font-head)', fontSize: '32px' }}>
                 {s.candidateName || 'Candidate Report'}
@@ -155,7 +155,7 @@ export default function HRReports() {
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+          <div className="split-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
             {ev.strengths?.length > 0 && (
               <div className="card">
                 <h3 style={{ fontFamily: 'var(--font-head)', fontSize: '16px', color: '#22c55e', marginBottom: '8px' }}>STRENGTHS</h3>
@@ -202,7 +202,7 @@ export default function HRReports() {
             )
           })}
 
-          <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+          <div className="report-actions" style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
             <button className="btn btn-primary" onClick={() => exportPDF(s)}>Export PDF</button>
             <button className="btn btn-outline" onClick={() => window.print()}>Print</button>
           </div>
@@ -212,14 +212,14 @@ export default function HRReports() {
   }
 
   return (
-    <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
-      <div className="container" style={{ padding: '32px 24px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+    <div className="page-enter app-page dashboard-page reports-page" style={{ minHeight: 'calc(100vh - 60px)', background: 'var(--bg-subtle)' }}>
+      <div className="container page-shell" style={{ padding: '32px 24px' }}>
+        <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
           <div>
             <h1 style={{ fontFamily: 'var(--font-head)', fontSize: '36px' }}>FEEDBACK REPORTS</h1>
             <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>{filtered.length} interview reports</p>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div className="filter-row" style={{ display: 'flex', gap: '8px' }}>
             {[['all', 'All'], ['high', '70+'], ['mid', '40-69'], ['low', '<40']].map(([k, l]) => (
               <button key={k} className={`btn ${filterScore === k ? 'btn-primary' : 'btn-ghost'}`} style={{ fontSize: '12px' }} onClick={() => setFilterScore(k)}>{l}</button>
             ))}
@@ -233,16 +233,16 @@ export default function HRReports() {
             <p style={{ fontSize: '16px', color: 'var(--text-muted)', marginTop: '16px' }}>No reports yet. Completed interviews will appear here.</p>
           </div>
         ) : (
-          <div style={{ border: '1px solid var(--border)' }}>
+          <div style={{ border: '1px solid var(--border)' }} className="table-scroll report-table">
             {/* Header row */}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 120px', padding: '12px 16px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
+            <div className="dashboard-table" style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 120px', padding: '12px 16px', background: 'var(--bg-subtle)', borderBottom: '1px solid var(--border)', fontSize: '11px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)' }}>
               <span>Candidate</span><span>Campaign</span><span>Score</span><span>Recommendation</span><span>Date</span><span>Actions</span>
             </div>
             {filtered.map(s => {
               const date = s.startedAt?.toDate ? s.startedAt.toDate().toLocaleDateString() : '—'
               const ev = s.evaluation || {}
               return (
-                <div key={s.id} style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 120px', padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: '13px', alignItems: 'center', cursor: 'pointer' }} onClick={() => setSelectedSession(s)}>
+                <div key={s.id} className="dashboard-table" style={{ display: 'grid', gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 120px', padding: '12px 16px', borderBottom: '1px solid var(--border)', fontSize: '13px', alignItems: 'center', cursor: 'pointer' }} onClick={() => setSelectedSession(s)}>
                   <span style={{ fontWeight: 600 }}>{s.candidateName || 'Unknown'}</span>
                   <span style={{ color: 'var(--text-muted)' }}>{s.campaignTitle || s.id?.substring(0, 12)}</span>
                   <span style={{ fontWeight: 700, color: sc(s.overallScore || 0) }}>{s.overallScore || '—'}/100</span>
@@ -254,7 +254,7 @@ export default function HRReports() {
                     )}
                   </span>
                   <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>{date}</span>
-                  <div style={{ display: 'flex', gap: '6px' }}>
+                  <div className="responsive-actions" style={{ display: 'flex', gap: '6px' }}>
                     <button className="btn btn-ghost" style={{ fontSize: '11px', padding: '4px 8px' }} onClick={e => { e.stopPropagation(); setSelectedSession(s) }}>View</button>
                     <button className="btn btn-ghost" style={{ fontSize: '11px', padding: '4px 8px' }} onClick={e => { e.stopPropagation(); exportPDF(s) }}>PDF</button>
                   </div>

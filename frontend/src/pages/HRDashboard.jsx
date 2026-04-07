@@ -161,28 +161,28 @@ export default function HRDashboard() {
   const completedSessions = recentSessions.filter(s => s.status === 'completed')
 
   return (
-    <div className="page-enter" style={{ minHeight: 'calc(100vh - 60px)', background: '#f7f6fb' }}>
-      <div className="container" style={{ padding: '32px 24px', maxWidth: '1120px' }}>
+    <div className="page-enter app-page dashboard-page hr-dashboard" style={{ minHeight: 'calc(100vh - 60px)', background: '#f7f6fb' }}>
+      <div className="container page-shell" style={{ padding: '32px 24px', maxWidth: '1120px' }}>
 
         {/* Greeting + tabs row */}
-        <div style={S.topRow}>
+        <div style={S.topRow} className="page-header">
           <div>
             <h1 style={S.greeting}>
               Welcome, <span style={{ color: 'var(--primary)' }}>{currentUser.email?.split('@')[0]}</span>
             </h1>
             <p style={S.greetingSub}>Manage interviews, generate links, and observe candidates live.</p>
           </div>
-          <div style={S.topStats}>
+          <div style={S.topStats} className="responsive-toolbar">
             <div style={S.topStat}>
               <span style={S.topStatNum}>{quickLinks.length}</span>
               <span style={S.topStatLabel}>Active Links</span>
             </div>
-            <div style={S.topStatDivider} />
+            <div style={S.topStatDivider} className="mobile-hidden" />
             <div style={S.topStat}>
               <span style={S.topStatNum}>{campaigns.length}</span>
               <span style={S.topStatLabel}>Campaigns</span>
             </div>
-            <div style={S.topStatDivider} />
+            <div style={S.topStatDivider} className="mobile-hidden" />
             <div style={S.topStat}>
               <span style={S.topStatNum}>{completedSessions.length}</span>
               <span style={S.topStatLabel}>Reports</span>
@@ -219,7 +219,7 @@ export default function HRDashboard() {
         {tab === 'overview' && (
           <>
             {/* Quick link generator card */}
-            <div style={S.genCard}>
+            <div style={S.genCard} className="dashboard-hero">
               <div style={S.genCardLeft}>
                 <div style={S.genIconBox}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
@@ -229,7 +229,7 @@ export default function HRDashboard() {
                   <p style={S.genSub}>Create a one-time link instantly. No campaign setup needed.</p>
                 </div>
               </div>
-              <div style={S.genCardRight}>
+              <div style={S.genCardRight} className="responsive-toolbar">
                 <input
                   value={form.title}
                   onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
@@ -267,11 +267,11 @@ export default function HRDashboard() {
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                         </button>
                       </div>
-                      <div style={S.linkUrlRow}>
+                      <div style={S.linkUrlRow} className="landing-link-row">
                         <code style={S.linkUrl}>{link.url}</code>
                         <button style={S.copyBtn} onClick={() => copyText(link.url)}>Copy</button>
                       </div>
-                      <div style={S.linkActions}>
+                      <div style={S.linkActions} className="responsive-actions">
                         <button style={S.watchBtn} onClick={() => navigate(`/observe/${link.id}`)}>
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
                           Watch Live
@@ -328,14 +328,14 @@ export default function HRDashboard() {
                             {session.status || 'in-progress'}
                           </span>
                         </div>
-                        <div style={S.linkActions}>
+                        <div style={S.linkActions} className="responsive-actions">
                           <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
                             Score:{' '}
                             <strong style={{ color: score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--warning)' : score != null ? 'var(--danger)' : 'var(--text-muted)' }}>
                               {score ?? 'Pending'}
                             </strong>
                           </div>
-                          <div style={{ display: 'flex', gap: '8px' }}>
+                          <div className="responsive-actions" style={{ display: 'flex', gap: '8px' }}>
                             {session.campaignId && (
                               <button style={S.watchBtn} onClick={() => navigate(`/observe/${session.campaignId}`)}>
                                 Watch Live
@@ -366,7 +366,7 @@ export default function HRDashboard() {
             {/* How it works */}
             <div style={S.howSection}>
               <h3 style={{ ...S.sectionTitle, marginBottom: '16px' }}>How it works</h3>
-              <div style={S.howGrid}>
+              <div style={S.howGrid} className="three-col-grid">
                 {[
                   { num: '1', title: 'Generate', desc: 'Create a unique interview link' },
                   { num: '2', title: 'Share', desc: 'Send the link to your candidate' },
@@ -407,7 +407,7 @@ export default function HRDashboard() {
                   <label>Job Description *</label>
                   <textarea value={form.jobDescription} onChange={e => setForm(f => ({ ...f, jobDescription: e.target.value }))} placeholder="Paste the full job description..." style={{ minHeight: '120px' }} required />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="split-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                   <div className="form-group">
                     <label>Required Skills</label>
                     <input value={form.skills} onChange={e => setForm(f => ({ ...f, skills: e.target.value }))} placeholder="Python, Docker, SQL" />
@@ -435,7 +435,7 @@ export default function HRDashboard() {
 
         {/* ═══ AUTO GENERATE ═══ */}
         {tab === 'auto' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '28px' }}>
+          <div className="split-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '28px' }}>
             <div>
               <div style={S.sectionHeader}>
                 <h3 style={S.sectionTitle}>Auto Generate Campaign</h3>
@@ -446,7 +446,7 @@ export default function HRDashboard() {
 
               <div style={S.formCard}>
                 <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.08em', marginBottom: '10px', display: 'block' }}>ROLE TYPE</label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '20px' }}>
+                <div className="four-col-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '20px' }}>
                   {[
                     { key: 'frontend', label: 'Frontend' },
                     { key: 'backend', label: 'Backend' },
@@ -552,7 +552,7 @@ export default function HRDashboard() {
                 <button className="btn btn-primary" style={{ marginTop: '16px' }} onClick={() => setTab('create')}>Create Campaign</button>
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
+              <div className="cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
                 {campaigns.map(c => <CampaignCard key={c.id} campaign={c} />)}
               </div>
             )}

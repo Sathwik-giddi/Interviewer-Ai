@@ -25,10 +25,10 @@ export default function Login() {
   }
 
   return (
-    <div style={S.page} className="page-enter">
-      <div style={S.wrapper}>
+    <div style={S.page} className="page-enter app-page auth-page">
+      <div style={S.wrapper} className="auth-layout">
         {/* Left decorative panel */}
-        <div style={S.leftPanel}>
+        <div style={S.leftPanel} className="auth-aside">
           <div style={S.leftContent}>
             <div style={S.logoMark}>AI</div>
             <h2 style={S.leftTitle}>WELCOME<br />BACK</h2>
@@ -43,7 +43,7 @@ export default function Login() {
         </div>
 
         {/* Right form panel */}
-        <div style={S.rightPanel}>
+        <div style={S.rightPanel} className="auth-main">
           <div style={S.formWrap}>
             <h1 style={S.title}>SIGN IN</h1>
             <p style={S.sub}>Enter your credentials to access your account.</p>
