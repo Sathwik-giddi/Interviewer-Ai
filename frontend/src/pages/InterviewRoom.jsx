@@ -550,6 +550,13 @@ export default function InterviewRoom() {
 
   const hrAudioRef = useRef(null)
 
+  async function playElement(element) {
+    if (!element) return
+    try {
+      await element.play()
+    } catch {}
+  }
+
   async function maybeLogSelectedPath(pc, contextLabel = 'candidate') {
     const pair = await getSelectedCandidatePairInfo(pc)
     if (!pair) return
@@ -589,11 +596,24 @@ export default function InterviewRoom() {
     pc.ontrack = ({ streams }) => {
       if (streams[0] && hrAudioRef.current) {
         hrAudioRef.current.srcObject = streams[0]
-        hrAudioRef.current.play().catch(() => {})
+        playElement(hrAudioRef.current)
       }
     }
     return pc
   }
+
+  useEffect(() => {
+    function resumeHrAudio() {
+      playElement(hrAudioRef.current)
+    }
+
+    window.addEventListener('pointerdown', resumeHrAudio)
+    window.addEventListener('keydown', resumeHrAudio)
+    return () => {
+      window.removeEventListener('pointerdown', resumeHrAudio)
+      window.removeEventListener('keydown', resumeHrAudio)
+    }
+  }, [])
 
   async function getReadyLocalStream() {
     if (localStreamRef.current?.getTracks?.().length) return localStreamRef.current

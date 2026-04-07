@@ -68,6 +68,8 @@ export default function HRObserverRoom() {
   const lastStreamRequestAtRef = useRef(0)
   const candidatePresentRef = useRef(false)
   const streamActiveRef = useRef(false)
+  const waitingForOfferRef = useRef(false)
+  const remoteAudioRef = useRef(null)
 
   useEffect(() => { candidatePresentRef.current = candidatePresent }, [candidatePresent])
   useEffect(() => { streamActiveRef.current = streamActive }, [streamActive])
@@ -120,31 +122,56 @@ export default function HRObserverRoom() {
   }
 
   function requestCandidateStream({ resetAttempts = false } = {}) {
-    if (!socketRef.current || !campaignId || !candidatePresentRef.current || streamActiveRef.current) return
+    if (!socketRef.current || !campaignId || !candidatePresentRef.current || streamActiveRef.current || waitingForOfferRef.current) return
     if (resetAttempts) streamRetryCountRef.current = 0
     lastStreamRequestAtRef.current = Date.now()
     streamRetryCountRef.current += 1
+    waitingForOfferRef.current = true
     socketRef.current.emit('request-stream', { roomId: campaignId })
     addLog('system', `Requested candidate stream${streamRetryCountRef.current > 1 ? ` (retry ${streamRetryCountRef.current})` : ''}.`)
   }
 
+  async function playMediaElement(element, { muted = false } = {}) {
+    if (!element) return false
+    element.muted = muted
+    try {
+      await element.play()
+      return true
+    } catch {
+      return false
+    }
+  }
+
   async function attachRemoteStream(stream) {
     const video = remoteVideoRef.current
+    const audio = remoteAudioRef.current
     if (!video || !stream) return
 
     video.srcObject = stream
     video.autoplay = true
     video.playsInline = true
-    video.muted = true
+    video.muted = false
+
+    if (audio) {
+      audio.srcObject = stream
+      audio.autoplay = true
+      audio.playsInline = true
+      audio.muted = false
+    }
 
     const startPlayback = async () => {
-      try {
-        await video.play()
+      const videoStarted = await playMediaElement(video, { muted: false }) || await playMediaElement(video, { muted: true })
+      const audioStarted = await playMediaElement(audio, { muted: false })
+
+      if (videoStarted) {
         setStreamActive(true)
         streamRetryCountRef.current = 0
-      } catch {
+        waitingForOfferRef.current = false
+      } else {
         setStreamActive(false)
       }
+
+      return videoStarted || audioStarted
     }
 
     video.onloadedmetadata = startPlayback
@@ -169,6 +196,7 @@ export default function HRObserverRoom() {
       if (role === 'candidate') {
         setCandidatePresent(true)
         addLog('system', 'Candidate joined.')
+        waitingForOfferRef.current = false
         requestCandidateStream({ resetAttempts: true })
       }
     })
@@ -184,12 +212,14 @@ export default function HRObserverRoom() {
         setCandidatePresent(false)
         setStreamActive(false)
         streamRetryCountRef.current = 0
+        waitingForOfferRef.current = false
         addLog('system', 'Candidate left.')
       }
     })
 
     // WebRTC
     socket.on('offer', async ({ from, offer }) => {
+      waitingForOfferRef.current = false
       const pc = await createPC(from)
       await pc.setRemoteDescription(new RTCSessionDescription(offer))
       for (const c of pendingCandidates.current) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
@@ -271,6 +301,8 @@ export default function HRObserverRoom() {
     streamRetryTimerRef.current = setInterval(() => {
       if (!candidatePresent || streamActive) return
       if (streamRetryCountRef.current >= STREAM_RETRY_LIMIT) return
+      if (Date.now() - lastStreamRequestAtRef.current < STREAM_RETRY_INTERVAL_MS) return
+      waitingForOfferRef.current = false
       requestCandidateStream()
     }, STREAM_RETRY_INTERVAL_MS)
 
@@ -305,11 +337,29 @@ export default function HRObserverRoom() {
       if (pc.connectionState === 'connected') {
         setStreamActive(true)
         streamRetryCountRef.current = 0
+        waitingForOfferRef.current = false
       }
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') setStreamActive(false)
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+        setStreamActive(false)
+        waitingForOfferRef.current = false
+      }
     }
     return pc
   }
+
+  useEffect(() => {
+    function resumeRemoteMedia() {
+      playMediaElement(remoteVideoRef.current, { muted: false }).catch?.(() => {})
+      playMediaElement(remoteAudioRef.current, { muted: false }).catch?.(() => {})
+    }
+
+    window.addEventListener('pointerdown', resumeRemoteMedia)
+    window.addEventListener('keydown', resumeRemoteMedia)
+    return () => {
+      window.removeEventListener('pointerdown', resumeRemoteMedia)
+      window.removeEventListener('keydown', resumeRemoteMedia)
+    }
+  }, [])
 
   async function enableMic() {
     try {
@@ -393,13 +443,14 @@ export default function HRObserverRoom() {
         {/* Video */}
         <div style={S.videoBox}>
           {candidatePresent ? (
-            <video ref={remoteVideoRef} autoPlay playsInline muted controls style={S.video} />
+            <video ref={remoteVideoRef} autoPlay playsInline controls style={S.video} />
           ) : (
             <div style={S.noVideo}>
               <span style={{ fontSize: '40px' }}>📹</span>
               <p style={{ fontSize: '13px', color: '#888', marginTop: '8px' }}>{sessionEnded ? 'Session ended' : 'Waiting for candidate…'}</p>
             </div>
           )}
+          <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
           {speaking && <div style={S.liveOverlay}>🎙 YOU ARE LIVE — AI PAUSED</div>}
           {streamActive && !speaking && <div style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(34,197,94,0.9)', color: '#fff', padding: '4px 8px', fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em' }}>● LIVE</div>}
         </div>
