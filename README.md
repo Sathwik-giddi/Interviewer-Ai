@@ -138,7 +138,7 @@ The original Flask + Gradio/HuggingFace prototype is preserved in `ai-video-inte
 
 ## ✨ Features
 
-- 🧠 Dynamic AI-powered interview questions using Hugging Face ([ahmedatk/ai_interviewer](https://huggingface.co/spaces/ahmedatk/ai_interviewer))
+- 🧠 Dynamic AI-powered interview questions using Hugging Face
 - 🎙️ Speech Recognition with `SpeechRecognition`
 - 🔊 Text-to-Speech via `gTTS` and `pydub` (requires FFmpeg)
 - 💬 Interactive chat UI with separate bubbles for user and interviewer
