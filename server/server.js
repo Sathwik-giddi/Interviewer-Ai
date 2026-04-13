@@ -11,11 +11,11 @@ const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173'
 const app    = express()
 const server = http.createServer(app)
 const io     = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: { origin: CLIENT_ORIGIN, methods: ['GET', 'POST'] },
   transports: ['websocket', 'polling'],
 })
 
-app.use(cors())
+app.use(cors({ origin: CLIENT_ORIGIN }))
 app.get('/health', (_, res) => res.json({ status: 'ok' }))
 
 /**
@@ -78,7 +78,7 @@ function getStaticTurnCredentials() {
  * Get TURN credentials (from cache or static config)
  * Static credentials don't expire, but we cache them to avoid rebuilding URLs on every request
  */
-async function getTurnCredentials() {
+function getTurnCredentials() {
   const now = Date.now()
 
   // Return cached credentials if still valid
@@ -111,9 +111,9 @@ async function getTurnCredentials() {
  * Returns TURN server configuration for WebRTC
  * No authentication required (public endpoint, credentials are temporary)
  */
-app.get('/api/turn-credentials', async (req, res) => {
+app.get('/api/turn-credentials', (req, res) => {
   try {
-    const credentials = await getTurnCredentials()
+    const credentials = getTurnCredentials()
 
     res.json({
       iceServers: [
@@ -133,8 +133,8 @@ app.get('/api/turn-credentials', async (req, res) => {
   } catch (error) {
     console.error('[TURN] Error fetching credentials:', error.message)
     res.status(500).json({
-      error: 'Failed to fetch TURN credentials',
-      message: error.message,
+      error: 'TURN service unavailable',
+      message: 'Failed to retrieve TURN credentials. Please try again later.',
     })
   }
 })
@@ -158,11 +158,11 @@ app.get('/api/turn-credentials/validate', (req, res) => {
  * POST /api/turn-credentials/refresh
  * Force refresh credentials (admin endpoint)
  */
-app.post('/api/turn-credentials/refresh', async (req, res) => {
+app.post('/api/turn-credentials/refresh', (req, res) => {
   try {
     // Clear cache and fetch fresh
-    turnCredentialsCache = { credentials: null, expiresAt: 0, lastFetched: 0 }
-    const credentials = await getTurnCredentials()
+    turnCredentialsCache = { credentials: null, expiresAt: 0 }
+    const credentials = getTurnCredentials()
 
     res.json({
       success: true,
@@ -196,11 +196,41 @@ function resolveRoomId(roomId) {
   return observerAliases.get(roomId) || roomId
 }
 
+/**
+ * Periodic cleanup of stale observer aliases (every 10 minutes)
+ * Removes aliases whose source room no longer exists
+ */
+setInterval(() => {
+  for (const [aliasRoomId, sourceRoomId] of observerAliases.entries()) {
+    if (!rooms[sourceRoomId]) {
+      observerAliases.delete(aliasRoomId)
+      console.log(`[Signaling] Cleaned up stale alias: ${aliasRoomId} → ${sourceRoomId}`)
+    }
+  }
+}, 10 * 60 * 1000)
+
 io.on('connection', (socket) => {
   console.log(`[+] Socket connected: ${socket.id}`)
 
   // ── Join room ──────────────────────────────────────────────────────────
   socket.on('join-room', ({ roomId, userId, role }) => {
+    // Input validation
+    if (!roomId || typeof roomId !== 'string' || !roomId.trim()) {
+      console.log(`[Signaling] join-room rejected: invalid roomId from ${socket.id}`)
+      socket.emit('error', { message: 'Invalid roomId' })
+      return
+    }
+    if (!userId || typeof userId !== 'string' || !userId.trim()) {
+      console.log(`[Signaling] join-room rejected: invalid userId from ${socket.id}`)
+      socket.emit('error', { message: 'Invalid userId' })
+      return
+    }
+    if (!role || !['candidate', 'hr'].includes(role)) {
+      console.log(`[Signaling] join-room rejected: invalid role "${role}" from ${socket.id}`)
+      socket.emit('error', { message: 'Invalid role. Must be "candidate" or "hr".' })
+      return
+    }
+
     socket.join(roomId)
     const resolvedRoomId = resolveRoomId(roomId)
     if (resolvedRoomId && resolvedRoomId !== roomId) {
@@ -216,22 +246,27 @@ io.on('connection', (socket) => {
     if (role === 'candidate') {
       // Enforce single candidate per room
       if (room.candidateLocked && room.candidate && room.candidate !== socket.id) {
-        console.log(`[room:${resolvedRoomId}] REJECTED duplicate candidate: ${userId}`)
+        console.log(`[Signaling] [room:${resolvedRoomId}] REJECTED duplicate candidate: ${userId}`)
         socket.emit('room-locked', { message: 'This interview room already has an active candidate. Each link supports only one session at a time.' })
         socket.leave(roomId)
+        if (resolvedRoomId !== roomId) socket.leave(resolvedRoomId)
         return
       }
       room.candidate = socket.id
       room.candidateLocked = true
-      console.log(`[room:${resolvedRoomId}] Candidate joined: ${userId}`)
+      console.log(`[Signaling] [room:${resolvedRoomId}] Candidate joined: ${userId} (alias: ${roomId})`)
     } else if (role === 'hr') {
       room.hr = socket.id
-      console.log(`[room:${resolvedRoomId}] HR joined (observer): ${userId}`)
+      console.log(`[Signaling] [room:${resolvedRoomId}] HR joined (observer): ${userId} (alias: ${roomId})`)
       room.observers.add(socket.id)
     }
 
-    // Notify others in the room that a new peer joined
-    socket.to(roomId).emit('peer-joined', { userId, role, socketId: socket.id })
+    // Notify others in both the original and resolved room that a new peer joined
+    const peerJoinedPayload = { userId, role, socketId: socket.id }
+    socket.to(roomId).emit('peer-joined', peerJoinedPayload)
+    if (resolvedRoomId !== roomId) {
+      socket.to(resolvedRoomId).emit('peer-joined', peerJoinedPayload)
+    }
     socket.emit('room-state', {
       hasCandidate: !!room.candidate,
       observerCount: room.observers.size,
@@ -246,7 +281,8 @@ io.on('connection', (socket) => {
     const sourceRoom = getRoom(sourceRoomId)
     const aliasRoom = rooms[observerRoomId]
 
-    if (socket.data.role === 'candidate') {
+    // Only set candidate if not already set (prevent overwriting existing candidate)
+    if (socket.data.role === 'candidate' && !sourceRoom.candidate) {
       sourceRoom.candidate = socket.id
       sourceRoom.candidateLocked = true
     }
@@ -267,60 +303,124 @@ io.on('connection', (socket) => {
 
   // ── Stream request: HR asks candidate to send WebRTC offer ──────────
   socket.on('request-stream', ({ roomId }) => {
-    const room = getRoom(resolveRoomId(roomId))
+    if (socket.data.role !== 'hr') {
+      console.log(`[Signaling] request-stream rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
+      return
+    }
+    const resolvedRoomId = resolveRoomId(roomId)
+    const room = getRoom(resolvedRoomId)
     if (room.candidate) {
-      console.log(`[room:${roomId}] HR requested stream from candidate`)
+      console.log(`[Signaling] [room:${resolvedRoomId}] HR requested stream from candidate (alias: ${roomId})`)
       io.to(room.candidate).emit('send-stream', { to: socket.id })
     }
   })
 
   // ── WebRTC Signaling ───────────────────────────────────────────────────
   socket.on('offer', ({ to, offer }) => {
+    if (!to || !offer) return
+    console.log(`[Signaling] Relay offer from ${socket.id} to ${to}`)
     io.to(to).emit('offer', { from: socket.id, offer })
   })
 
   socket.on('answer', ({ to, answer }) => {
+    if (!to || !answer) return
+    console.log(`[Signaling] Relay answer from ${socket.id} to ${to}`)
     io.to(to).emit('answer', { from: socket.id, answer })
   })
 
   socket.on('ice-candidate', ({ to, candidate }) => {
+    if (!to || !candidate) return
     io.to(to).emit('ice-candidate', { from: socket.id, candidate })
+  })
+
+  // ── HR → Candidate WebRTC signaling (two-way audio/video) ──────────────
+  socket.on('hr-offer', ({ to, offer }) => {
+    if (socket.data.role !== 'hr') {
+      console.log(`[Signaling] hr-offer rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
+      return
+    }
+    if (!to || !offer) return
+    console.log(`[WebRTC] [room:${socket.data.roomId}] HR offer → candidate ${to}`)
+    io.to(to).emit('hr-offer', { from: socket.id, offer })
+  })
+
+  socket.on('candidate-answer', ({ to, answer }) => {
+    if (socket.data.role !== 'candidate') {
+      console.log(`[Signaling] candidate-answer rejected: non-candidate role "${socket.data.role}" from ${socket.id}`)
+      return
+    }
+    if (!to || !answer) return
+    console.log(`[WebRTC] [room:${socket.data.roomId}] Candidate answer → HR ${to}`)
+    io.to(to).emit('candidate-answer', { from: socket.id, answer })
+  })
+
+  socket.on('hr-ice-candidate', ({ to, candidate }) => {
+    if (!to || !candidate) return
+    io.to(to).emit('hr-ice-candidate', { from: socket.id, candidate })
   })
 
   // ── HR speak request → candidate ──────────────────────────────────────
   socket.on('hr-speak-request', ({ roomId }) => {
-    const room = getRoom(resolveRoomId(roomId))
+    if (socket.data.role !== 'hr') {
+      console.log(`[Signaling] hr-speak-request rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
+      return
+    }
+    const resolvedRoomId = resolveRoomId(roomId)
+    const room = getRoom(resolvedRoomId)
     if (room.candidate) {
-      console.log(`[room:${roomId}] HR requested to speak`)
+      console.log(`[Signaling] [room:${resolvedRoomId}] HR requested to speak (alias: ${roomId})`)
       io.to(room.candidate).emit('hr-speak-request', { hrSocketId: socket.id })
     }
   })
 
-  // ── Candidate accepted HR speak → notify HR, tell AI to pause ─────────
+  // ── Candidate accepted HR speak → notify all observers + candidate, tell AI to pause ─────────
   socket.on('hr-speak-accept', ({ roomId }) => {
-    const room = getRoom(resolveRoomId(roomId))
-    if (room.hr) {
-      console.log(`[room:${roomId}] Candidate accepted HR speak`)
-      io.to(room.hr).emit('hr-speak-accepted')
+    if (socket.data.role !== 'candidate') {
+      console.log(`[Signaling] hr-speak-accept rejected: non-candidate role "${socket.data.role}" from ${socket.id}`)
+      return
     }
-    // Broadcast to the whole room to pause AI
-    socket.to(roomId).emit('ai-pause')
+    const resolvedRoomId = resolveRoomId(roomId)
+    const room = getRoom(resolvedRoomId)
+    console.log(`[Signaling] [room:${resolvedRoomId}] Candidate accepted HR speak (alias: ${roomId})`)
+
+    // Notify all observers (including HR)
+    room.observers.forEach(obsId => {
+      io.to(obsId).emit('hr-speak-accepted')
+    })
+    // Also confirm to the candidate
+    socket.emit('hr-speak-accepted')
+
+    // Broadcast to the resolved room to pause AI
+    socket.to(resolvedRoomId).emit('ai-pause')
+    if (resolvedRoomId !== roomId) {
+      socket.to(roomId).emit('ai-pause')
+    }
   })
 
   // ── HR ended speaking → resume AI ─────────────────────────────────────
   socket.on('hr-speak-end', ({ roomId }) => {
-    const room = getRoom(resolveRoomId(roomId))
-    console.log(`[room:${roomId}] HR ended speaking — resuming AI`)
+    if (socket.data.role !== 'hr') {
+      console.log(`[Signaling] hr-speak-end rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
+      return
+    }
+    const resolvedRoomId = resolveRoomId(roomId)
+    const room = getRoom(resolvedRoomId)
+    console.log(`[Signaling] [room:${resolvedRoomId}] HR ended speaking — resuming AI (alias: ${roomId})`)
     // Notify candidate to resume
     if (room.candidate) {
       io.to(room.candidate).emit('hr-speak-end')
     }
-    socket.to(roomId).emit('ai-resume')
+    // Broadcast to resolved room to resume AI
+    socket.to(resolvedRoomId).emit('ai-resume')
+    if (resolvedRoomId !== roomId) {
+      socket.to(roomId).emit('ai-resume')
+    }
   })
 
   // ── Proctoring alert relay (candidate → HR observer) ──────────────────
   socket.on('proctoring-alert', ({ roomId, warning }) => {
-    const room = getRoom(resolveRoomId(roomId))
+    const resolvedRoomId = resolveRoomId(roomId)
+    const room = getRoom(resolvedRoomId)
     room.observers.forEach(obsId => {
       io.to(obsId).emit('proctoring-alert', { warning, candidateId: socket.data.userId })
     })
@@ -328,7 +428,9 @@ io.on('connection', (socket) => {
 
   // ── Interview state relay (candidate → HR) ────────────────────────────
   socket.on('interview-state', (data) => {
-    const room = getRoom(resolveRoomId(data.roomId))
+    if (!data || !data.roomId) return
+    const resolvedRoomId = resolveRoomId(data.roomId)
+    const room = getRoom(resolvedRoomId)
     room.observers.forEach(obsId => {
       io.to(obsId).emit('interview-state', data)
     })
@@ -336,7 +438,9 @@ io.on('connection', (socket) => {
 
   // ── Candidate typing relay (candidate → HR) ──────────────────────────
   socket.on('candidate-typing', (data) => {
-    const room = getRoom(resolveRoomId(data.roomId))
+    if (!data || !data.roomId) return
+    const resolvedRoomId = resolveRoomId(data.roomId)
+    const room = getRoom(resolvedRoomId)
     room.observers.forEach(obsId => {
       io.to(obsId).emit('candidate-typing', data)
     })
@@ -344,7 +448,9 @@ io.on('connection', (socket) => {
 
   // ── AI speaking relay (candidate → HR) ────────────────────────────────
   socket.on('ai-speaking', (data) => {
-    const room = getRoom(resolveRoomId(data.roomId))
+    if (!data || !data.roomId) return
+    const resolvedRoomId = resolveRoomId(data.roomId)
+    const room = getRoom(resolvedRoomId)
     room.observers.forEach(obsId => {
       io.to(obsId).emit('ai-speaking', data)
     })
@@ -352,7 +458,9 @@ io.on('connection', (socket) => {
 
   // ── Answer submitted relay (candidate → HR) ──────────────────────────
   socket.on('answer-submitted', (data) => {
-    const room = getRoom(resolveRoomId(data.roomId))
+    if (!data || !data.roomId) return
+    const resolvedRoomId = resolveRoomId(data.roomId)
+    const room = getRoom(resolvedRoomId)
     room.observers.forEach(obsId => {
       io.to(obsId).emit('answer-submitted', data)
     })
@@ -360,7 +468,9 @@ io.on('connection', (socket) => {
 
   // ── Proctoring state relay (candidate → HR) — mood, objects, warnings
   socket.on('proctoring-state', (data) => {
-    const room = getRoom(resolveRoomId(data.roomId))
+    if (!data || !data.roomId) return
+    const resolvedRoomId = resolveRoomId(data.roomId)
+    const room = getRoom(resolvedRoomId)
     room.observers.forEach(obsId => {
       io.to(obsId).emit('proctoring-state', data)
     })
@@ -368,27 +478,47 @@ io.on('connection', (socket) => {
 
   // ── HR custom question relay (HR observer → candidate) ────────────────
   socket.on('hr-custom-question', (data) => {
-    const room = getRoom(resolveRoomId(data.roomId))
+    if (socket.data.role !== 'hr') {
+      console.log(`[Signaling] hr-custom-question rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
+      return
+    }
+    if (!data || !data.roomId) return
+    const resolvedRoomId = resolveRoomId(data.roomId)
+    const room = getRoom(resolvedRoomId)
     if (room.candidate) {
-      console.log(`[room:${data.roomId}] HR sent custom question to candidate`)
+      console.log(`[Signaling] [room:${resolvedRoomId}] HR sent custom question to candidate (alias: ${data.roomId})`)
       io.to(room.candidate).emit('hr-custom-question', data)
     }
   })
 
   // ── HR question audio relay (HR observer → candidate) ────────────────
   socket.on('hr-question-audio', (data) => {
-    const room = getRoom(resolveRoomId(data.roomId))
+    if (socket.data.role !== 'hr') {
+      console.log(`[Signaling] hr-question-audio rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
+      return
+    }
+    if (!data || !data.roomId) return
+    const resolvedRoomId = resolveRoomId(data.roomId)
+    const room = getRoom(resolvedRoomId)
     if (room.candidate) {
-      console.log(`[room:${data.roomId}] HR sent question audio to candidate`)
+      console.log(`[Signaling] [room:${resolvedRoomId}] HR sent question audio to candidate (alias: ${data.roomId})`)
       io.to(room.candidate).emit('hr-question-audio', data)
     }
   })
 
   // ── Interview ended ────────────────────────────────────────────────────
   socket.on('interview-ended', (data) => {
-    const roomId = data?.roomId || data
-    socket.to(roomId).emit('interview-ended', data)
-    console.log(`[room:${roomId}] Interview ended`)
+    const rawRoomId = typeof data === 'string' ? data : data?.roomId
+    if (!rawRoomId || typeof rawRoomId !== 'string') {
+      console.log(`[Signaling] interview-ended rejected: invalid roomId from ${socket.id}`)
+      return
+    }
+    const resolvedRoomId = resolveRoomId(rawRoomId)
+    console.log(`[Signaling] [room:${resolvedRoomId}] Interview ended (alias: ${rawRoomId})`)
+    socket.to(resolvedRoomId).emit('interview-ended', data)
+    if (resolvedRoomId !== rawRoomId) {
+      socket.to(rawRoomId).emit('interview-ended', data)
+    }
   })
 
   // ── Disconnect ─────────────────────────────────────────────────────────
@@ -408,8 +538,14 @@ io.on('connection', (socket) => {
     }
     room.observers.delete(socket.id)
 
-    socket.to(roomId).emit('peer-left', { socketId: socket.id, role })
-    console.log(`[-] Socket disconnected: ${socket.id} (room: ${roomId}, role: ${role})`)
+    // Notify both resolved room and original joined room
+    const peerLeftPayload = { socketId: socket.id, role }
+    socket.to(roomId).emit('peer-left', peerLeftPayload)
+    const joinedRoomId = socket.data.joinedRoomId
+    if (joinedRoomId && joinedRoomId !== roomId) {
+      socket.to(joinedRoomId).emit('peer-left', peerLeftPayload)
+    }
+    console.log(`[-] Socket disconnected: ${socket.id} (room: ${roomId}, joined: ${joinedRoomId}, role: ${role})`)
 
     // Clean up empty rooms
     if (!room.candidate && !room.hr && room.observers.size === 0) {

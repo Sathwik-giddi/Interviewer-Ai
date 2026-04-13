@@ -240,6 +240,29 @@ export default function HRObserverRoom() {
     // HR speak accepted
     socket.on('hr-speak-accepted', () => { setSpeaking(true); setSpeakRequested(false); enableMic(); addLog('system', 'Speaking to candidate — AI paused.') })
 
+    // Candidate's WebRTC answer for HR's two-way media offer
+    socket.on('candidate-answer', async ({ from, answer }) => {
+      if (hrSpeakPcRef.current?.signalingState === 'have-local-offer') {
+        try {
+          await hrSpeakPcRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+          console.log('[WebRTC] HR received candidate answer — two-way connection establishing')
+        } catch (err) {
+          console.error('[WebRTC] Failed to set candidate answer:', err)
+        }
+      }
+    })
+
+    // ICE candidates from candidate for the HR speak peer connection
+    socket.on('hr-ice-candidate', async ({ candidate }) => {
+      if (hrSpeakPcRef.current && candidate) {
+        try {
+          await hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+        } catch (err) {
+          console.warn('[WebRTC] Failed to add HR ICE candidate:', err)
+        }
+      }
+    })
+
     // Interview state relay
     socket.on('interview-state', (data) => setInterviewState(data))
     socket.on('candidate-typing', (data) => { setCandidateAnswer(data.currentAnswer || ''); setAnswerType(data.answerType || 'text') })
@@ -286,6 +309,7 @@ export default function HRObserverRoom() {
       clearInterval(streamRetryTimerRef.current)
       socket.disconnect()
       peerRef.current?.close()
+      hrSpeakPcRef.current?.close()
       localStreamRef.current?.getTracks().forEach(t => t.stop())
     }
   }, [campaignId, currentUser])
@@ -314,6 +338,8 @@ export default function HRObserverRoom() {
   }
 
   const remotePeerIdRef = useRef(null)
+  const hrSpeakPcRef = useRef(null)
+  const hrSpeakRemotePeerIdRef = useRef(null)
 
   async function createPC(remotePeerId) {
     peerRef.current?.close()
@@ -363,18 +389,56 @@ export default function HRObserverRoom() {
 
   async function enableMic() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Acquire local audio + video for two-way communication with candidate
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true })
       localStreamRef.current = stream
-      const pc = peerRef.current
-      if (pc && remotePeerIdRef.current) {
-        stream.getTracks().forEach(track => pc.addTrack(track, stream))
-        // Renegotiate so candidate receives the new audio track
-        const offer = await pc.createOffer()
-        await pc.setLocalDescription(offer)
-        socketRef.current?.emit('offer', { to: remotePeerIdRef.current, offer })
-        addLog('system', 'Microphone enabled — audio sent to candidate.')
+
+      // Find the candidate's socket ID from the room
+      const candidateSocketId = remotePeerIdRef.current
+      if (!candidateSocketId) {
+        addLog('system', 'No candidate connection found for two-way media.')
+        return
       }
-    } catch { addLog('system', 'Microphone unavailable.') }
+
+      // Close any previous HR speak peer connection
+      hrSpeakPcRef.current?.close()
+
+      // Create a new dedicated peer connection for HR → candidate audio/video
+      const config = await buildRtcConfigAsync()
+      const pc = new RTCPeerConnection(config)
+      hrSpeakPcRef.current = pc
+      hrSpeakRemotePeerIdRef.current = candidateSocketId
+
+      // Add HR's local tracks (audio + video) to the connection
+      stream.getTracks().forEach(track => pc.addTrack(track, stream))
+
+      // Exchange ICE candidates via dedicated hr-ice-candidate event
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate) {
+          socketRef.current?.emit('hr-ice-candidate', { to: candidateSocketId, candidate })
+        }
+      }
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'connected') {
+          console.log('[WebRTC] HR speak peer connection established')
+        }
+        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+          console.warn('[WebRTC] HR speak peer connection', pc.connectionState)
+          addLog('system', 'Two-way connection lost.')
+        }
+      }
+
+      // Create and send offer to candidate via hr-offer signaling event
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
+      socketRef.current?.emit('hr-offer', { to: candidateSocketId, offer })
+      console.log('[WebRTC] HR sent offer to candidate for two-way media')
+      addLog('system', 'Camera & microphone enabled — sending audio/video to candidate.')
+    } catch (err) {
+      console.error('[WebRTC] Failed to enable mic/camera:', err)
+      addLog('system', 'Microphone/camera unavailable.')
+    }
   }
 
   /* ═══════════════════ HR CONTROLS ═══════════════════ */
@@ -386,7 +450,13 @@ export default function HRObserverRoom() {
 
   function endSpeaking() {
     setSpeaking(false); setSpeakRequested(false)
-    localStreamRef.current?.getTracks().forEach(t => t.stop()); localStreamRef.current = null
+    // Close the HR speak peer connection
+    hrSpeakPcRef.current?.close()
+    hrSpeakPcRef.current = null
+    hrSpeakRemotePeerIdRef.current = null
+    // Stop local media tracks acquired for two-way communication
+    localStreamRef.current?.getTracks().forEach(t => t.stop())
+    localStreamRef.current = null
     socketRef.current?.emit('hr-speak-end', { roomId: campaignId })
     addLog('system', 'Ended speaking. AI resumed.')
   }

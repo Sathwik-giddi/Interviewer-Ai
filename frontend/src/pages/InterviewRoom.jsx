@@ -145,6 +145,11 @@ export default function InterviewRoom() {
   const relayFallbackAttemptedRef = useRef(false)
   const activeRelayModeRef = useRef(false)
 
+  // HR two-way audio/video peer connection (separate from the main candidate→HR stream)
+  const hrSpeakPcRef = useRef(null)
+  const hrSpeakPendingCandidatesRef = useRef([])
+  const hrVideoRef = useRef(null)
+
   function getCurrentPageUrl() {
     return typeof window !== 'undefined' ? window.location.href : `/interview/${roomId}`
   }
@@ -520,7 +525,101 @@ export default function InterviewRoom() {
 
     // HR speak
     socket.on('hr-speak-request', () => { setHrSpeakRequest(true); stopSpeaking() })
-    socket.on('hr-speak-end', () => { setHrSpeaking(false); setHrSpeakRequest(false); setHrCustomQuestion(null) })
+    socket.on('hr-speak-end', () => {
+      setHrSpeaking(false); setHrSpeakRequest(false); setHrCustomQuestion(null)
+      // Close the HR speak peer connection and clean up
+      hrSpeakPcRef.current?.close()
+      hrSpeakPcRef.current = null
+      hrSpeakPendingCandidatesRef.current = []
+      if (hrVideoRef.current) hrVideoRef.current.srcObject = null
+      console.log('[WebRTC] HR speak peer connection closed')
+    })
+
+    // ── HR two-way audio/video signaling ──
+    // HR sends a WebRTC offer when they start speaking (after candidate accepts)
+    socket.on('hr-offer', async ({ from, offer }) => {
+      console.log('[WebRTC] Received HR offer for two-way media')
+      try {
+        // Close any previous HR speak peer connection
+        hrSpeakPcRef.current?.close()
+        hrSpeakPendingCandidatesRef.current = []
+
+        const config = await buildRtcConfigAsync()
+        const pc = new RTCPeerConnection(config)
+        hrSpeakPcRef.current = pc
+
+        // Add candidate's local tracks so HR can see/hear candidate
+        const localStream = localStreamRef.current
+        if (localStream) {
+          localStream.getTracks().forEach(track => pc.addTrack(track, localStream))
+        }
+
+        // Handle remote tracks from HR (audio + video)
+        pc.ontrack = ({ streams }) => {
+          console.log('[WebRTC] Received HR remote tracks')
+          if (streams[0]) {
+            // Play HR's audio
+            if (hrAudioRef.current) {
+              hrAudioRef.current.srcObject = streams[0]
+              playElement(hrAudioRef.current)
+            }
+            // Display HR's video in the small overlay
+            if (hrVideoRef.current) {
+              hrVideoRef.current.srcObject = streams[0]
+              playElement(hrVideoRef.current)
+            }
+          }
+        }
+
+        // Exchange ICE candidates via hr-ice-candidate event
+        pc.onicecandidate = ({ candidate }) => {
+          if (candidate) {
+            socket.emit('hr-ice-candidate', { to: from, candidate })
+          }
+        }
+
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === 'connected') {
+            console.log('[WebRTC] HR two-way connection established')
+          }
+          if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+            console.warn('[WebRTC] HR two-way connection', pc.connectionState)
+          }
+        }
+
+        // Set remote description (HR's offer) and create answer
+        await pc.setRemoteDescription(new RTCSessionDescription(offer))
+
+        // Add any pending ICE candidates
+        for (const c of hrSpeakPendingCandidatesRef.current) {
+          await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
+        }
+        hrSpeakPendingCandidatesRef.current = []
+
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+
+        // Send answer back to HR via candidate-answer event
+        socket.emit('candidate-answer', { to: from, answer })
+        console.log('[WebRTC] Sent candidate answer to HR for two-way media')
+      } catch (err) {
+        console.error('[WebRTC] Failed to handle HR offer:', err)
+      }
+    })
+
+    // ICE candidates from HR for the two-way peer connection
+    socket.on('hr-ice-candidate', async ({ candidate }) => {
+      if (hrSpeakPcRef.current?.remoteDescription) {
+        try {
+          await hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+        } catch (err) {
+          console.warn('[WebRTC] Failed to add HR ICE candidate:', err)
+        }
+      } else {
+        // Buffer until remote description is set
+        hrSpeakPendingCandidatesRef.current.push(candidate)
+      }
+    })
 
     // HR custom question — HR takes over from AI and asks their own question
     socket.on('hr-custom-question', ({ question }) => {
@@ -1330,6 +1429,14 @@ export default function InterviewRoom() {
           {/* HR voice audio — plays when HR is speaking via WebRTC */}
           <audio ref={hrAudioRef} autoPlay playsInline />
         </div>
+
+        {/* HR video overlay — small picture-in-picture when HR is speaking */}
+        {hrSpeaking && (
+          <div style={S.videoBox}>
+            <div style={S.videoLabel}><span>🎙 HR INTERVIEWER</span><span style={{ color: '#22c55e', fontSize: '10px' }}>● LIVE</span></div>
+            <video ref={hrVideoRef} autoPlay playsInline style={S.video} />
+          </div>
+        )}
 
         {/* Dialogue History */}
         {phase === 'interview' && dialogue.length > 0 && (
