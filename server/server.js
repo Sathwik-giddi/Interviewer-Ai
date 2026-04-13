@@ -26,22 +26,14 @@ app.get('/health', (_, res) => res.json({ status: 'ok' }))
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
-// Static TURN credentials from Metered.ca dashboard
-// These are long-lived credentials that don't expire
-const TURN_USERNAME = process.env.TURN_USERNAME || ''
-const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL || ''
-const TURN_DOMAIN = process.env.TURN_DOMAIN || ''
+// Metered.ca TURN configuration
+const METERED_API_KEY = process.env.METERED_API_KEY || '876e036a09795ff2cf68f0f06e70376c8ea8'
+const METERED_API_URL = `https://open-interviewer.metered.live/api/v1/turn/credentials?apiKey=${METERED_API_KEY}`
 
-// Build TURN server URLs from domain
-function buildTurnUrls() {
-  if (!TURN_DOMAIN) return []
-  return [
-    `turn:${TURN_DOMAIN}:80`,
-    `turn:${TURN_DOMAIN}:443`,
-    `turn:${TURN_DOMAIN}:443?transport=tcp`,
-    `turn:${TURN_DOMAIN}:3478`,
-  ]
-}
+// Static TURN credentials from Metered.ca dashboard (fallback)
+const TURN_USERNAME = process.env.TURN_USERNAME || '6695d7efa747633e5deeace9'
+const TURN_CREDENTIAL = process.env.TURN_CREDENTIAL || 'BSEyIggm5WJlQi4O'
+const TURN_DOMAIN = process.env.TURN_DOMAIN || ''
 
 // In-memory cache for TURN credentials
 let turnCredentialsCache = {
@@ -49,61 +41,58 @@ let turnCredentialsCache = {
   expiresAt: 0,
 }
 
-// Cache TTL: 24 hours (static credentials don't expire, but we refresh cache periodically)
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000
+// Cache TTL: 23 hours (dynamic credentials expire at 24h)
+const CACHE_TTL_MS = 23 * 60 * 60 * 1000
+
+// Static fallback ICE servers (Metered.ca)
+const STATIC_ICE_SERVERS = [
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  { urls: 'turn:global.relay.metered.ca:80', username: TURN_USERNAME, credential: TURN_CREDENTIAL },
+  { urls: 'turn:global.relay.metered.ca:80?transport=tcp', username: TURN_USERNAME, credential: TURN_CREDENTIAL },
+  { urls: 'turn:global.relay.metered.ca:443', username: TURN_USERNAME, credential: TURN_CREDENTIAL },
+  { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: TURN_USERNAME, credential: TURN_CREDENTIAL },
+]
 
 /**
- * Get static TURN credentials from environment variables
- * @returns {Object|null} TURN credentials object or null if not configured
+ * Get TURN credentials — tries Metered dynamic API first, falls back to static config
  */
-function getStaticTurnCredentials() {
-  if (!TURN_USERNAME || !TURN_CREDENTIAL) {
-    return null
-  }
-
-  const urls = buildTurnUrls()
-  if (urls.length === 0) {
-    return null
-  }
-
-  return {
-    urls,
-    username: TURN_USERNAME,
-    credential: TURN_CREDENTIAL,
-    expiresAt: Date.now() + CACHE_TTL_MS,
-  }
-}
-
-/**
- * Get TURN credentials (from cache or static config)
- * Static credentials don't expire, but we cache them to avoid rebuilding URLs on every request
- */
-function getTurnCredentials() {
+async function getTurnCredentials() {
   const now = Date.now()
 
   // Return cached credentials if still valid
-  if (
-    turnCredentialsCache.credentials &&
-    turnCredentialsCache.expiresAt > now
-  ) {
+  if (turnCredentialsCache.credentials && turnCredentialsCache.expiresAt > now) {
     return turnCredentialsCache.credentials
   }
 
-  // Get static credentials from environment variables
-  const credentials = getStaticTurnCredentials()
-  
-  if (!credentials) {
-    throw new Error('TURN credentials not configured. Set TURN_USERNAME, TURN_CREDENTIAL, and TURN_DOMAIN in environment variables.')
+  // Try dynamic Metered API first
+  try {
+    const response = await fetch(METERED_API_URL, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (response.ok) {
+      const iceServers = await response.json()
+      if (Array.isArray(iceServers) && iceServers.length > 0) {
+        console.log('[TURN] Dynamic credentials fetched from Metered API:', iceServers.length, 'servers')
+        turnCredentialsCache = {
+          credentials: iceServers,
+          expiresAt: now + CACHE_TTL_MS,
+        }
+        return iceServers
+      }
+    }
+    throw new Error(`Metered API returned ${response.status}`)
+  } catch (err) {
+    console.warn('[TURN] Dynamic API failed, using static credentials:', err.message)
   }
 
-  // Update cache
-  turnCredentialsCache = {
-    credentials,
-    expiresAt: credentials.expiresAt,
-  }
-
+  // Fallback to static credentials
   console.log('[TURN] Using static TURN credentials')
-  return credentials
+  turnCredentialsCache = {
+    credentials: STATIC_ICE_SERVERS,
+    expiresAt: now + CACHE_TTL_MS,
+  }
+  return STATIC_ICE_SERVERS
 }
 
 /**
@@ -111,24 +100,13 @@ function getTurnCredentials() {
  * Returns TURN server configuration for WebRTC
  * No authentication required (public endpoint, credentials are temporary)
  */
-app.get('/api/turn-credentials', (req, res) => {
+app.get('/api/turn-credentials', async (req, res) => {
   try {
-    const credentials = getTurnCredentials()
+    const iceServers = await getTurnCredentials()
 
     res.json({
-      iceServers: [
-        // STUN servers (always included, free)
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        // TURN server from Metered
-        {
-          urls: credentials.urls,
-          username: credentials.username,
-          credential: credentials.credential,
-        },
-      ],
-      expiresAt: credentials.expiresAt,
+      iceServers,
+      expiresAt: turnCredentialsCache.expiresAt,
     })
   } catch (error) {
     console.error('[TURN] Error fetching credentials:', error.message)
@@ -158,15 +136,15 @@ app.get('/api/turn-credentials/validate', (req, res) => {
  * POST /api/turn-credentials/refresh
  * Force refresh credentials (admin endpoint)
  */
-app.post('/api/turn-credentials/refresh', (req, res) => {
+app.post('/api/turn-credentials/refresh', async (req, res) => {
   try {
     // Clear cache and fetch fresh
     turnCredentialsCache = { credentials: null, expiresAt: 0 }
-    const credentials = getTurnCredentials()
+    await getTurnCredentials()
 
     res.json({
       success: true,
-      expiresAt: credentials.expiresAt,
+      expiresAt: turnCredentialsCache.expiresAt,
     })
   } catch (error) {
     console.error('[TURN] Error refreshing credentials:', error.message)

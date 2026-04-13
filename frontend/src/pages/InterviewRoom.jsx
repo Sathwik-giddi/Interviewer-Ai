@@ -8,7 +8,8 @@ import VoiceSelector from '../components/VoiceSelector'
 import ProctoringAlert from '../components/ProctoringAlert'
 import { useToast } from '../components/Toast'
 import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
-import { buildRtcConfigAsync, getSelectedCandidatePairInfo, hasTurnConfig } from '../lib/webrtcConfig'
+import { buildRtcConfig, getTurnIceServers } from '../utils/turnUtils'
+import { getSelectedCandidatePairInfo, hasTurnConfig } from '../lib/webrtcConfig'
 
 const BACKEND = getBackendBaseUrl()
 const SIGNAL  = getSocketServerUrl()
@@ -544,7 +545,7 @@ export default function InterviewRoom() {
         hrSpeakPcRef.current?.close()
         hrSpeakPendingCandidatesRef.current = []
 
-        const config = await buildRtcConfigAsync()
+        const config = await buildRtcConfig()
         const pc = new RTCPeerConnection(config)
         hrSpeakPcRef.current = pc
 
@@ -673,7 +674,7 @@ export default function InterviewRoom() {
     peerRef.current?.close()
     remotePeerIdRef.current = remotePeerId
     activeRelayModeRef.current = forceRelay
-    const config = await buildRtcConfigAsync({ forceRelay })
+    const config = await buildRtcConfig({ forceRelay })
     const pc = new RTCPeerConnection(config)
     peerRef.current = pc
     const stream = localStreamRef.current
