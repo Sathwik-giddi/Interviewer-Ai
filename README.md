@@ -261,7 +261,7 @@ See `LICENSE.md` for full terms and conditions.
 
 ## 🙌 Acknowledgments
 
-- Hugging Face model: [`ahmedatk/ai_interviewer`](https://huggingface.co/spaces/ahmedatk/ai_interviewer)  
+- Hugging Face model 
 - Libraries: Flask, gTTS, SpeechRecognition, pydub, gradio_client  
 - Audio: FFmpeg for TTS conversion  
 - Contributors and the open-source community for making this possible.
