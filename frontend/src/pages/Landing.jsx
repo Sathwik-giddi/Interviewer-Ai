@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import PricingSection from '../components/PricingSection'
+import CompareTable from '../components/CompareTable'
 
 /* ── Icon components ── */
 function IconMic() {
@@ -210,6 +211,11 @@ export default function Landing() {
       <section style={S.sectionAlt}>
         <PricingSection />
       </section>
+
+      {/* ════════════════════════════════════════
+          FEATURE COMPARISON TABLE
+          ════════════════════════════════════════ */}
+      <CompareTable />
 
       {/* ════════════════════════════════════════
           FAQ
