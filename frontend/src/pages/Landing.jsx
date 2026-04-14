@@ -256,7 +256,7 @@ export default function Landing() {
       </section>
 
       {/* CTA */}
-      <section style={{ padding: '100px 0', background: 'linear-gradient(180deg, #fff 0%, #f5f3ff 100%)' }}>
+      <section style={{ padding: '100px 0', background: 'linear-gradient(180deg, #FFFFFF 0%, #F8F9FC 100%)' }}>
         <div className="container text-center">
           <h2 className="fade-up" style={{ fontFamily: 'var(--font-head)', fontSize: 'clamp(36px, 6vw, 72px)', marginBottom: '16px' }}>
             READY TO INTERVIEW<br />

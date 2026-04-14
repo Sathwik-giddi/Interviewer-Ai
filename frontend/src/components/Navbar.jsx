@@ -43,7 +43,7 @@ export default function Navbar() {
       <div className="container site-nav__inner" style={styles.inner}>
         <Link to={currentUser ? (userRole === 'hr' ? '/hr' : '/candidate') : '/'} style={styles.logo}>
           <span style={styles.logoIcon}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           </span>
           CAN<span style={{ color: 'var(--primary)' }}>VUE</span>
         </Link>
@@ -107,7 +107,6 @@ const styles = {
     position: 'sticky',
     top: 0,
     zIndex: 100,
-    backdropFilter: 'blur(12px)',
   },
   inner: {
     display: 'flex',
@@ -131,10 +130,11 @@ const styles = {
   logoIcon: {
     width: '32px',
     height: '32px',
-    background: 'var(--primary)',
+    background: 'var(--gradient-primary)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: '6px',
   },
   links: {
     display: 'flex',
