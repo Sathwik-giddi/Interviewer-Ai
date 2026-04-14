@@ -51,21 +51,41 @@ export default function ATSReport() {
         </div>
 
         {/* Upload Form */}
-        <form onSubmit={handleAnalyze} className="card" style={{ marginBottom: '24px' }}>
-          <div className="form-group">
-            <label>Resume (PDF / DOCX) *</label>
-            <input type="file" accept=".pdf,.docx" onChange={e => setResumeFile(e.target.files[0])} />
+        <form onSubmit={handleAnalyze} style={{ background: '#FFFFFF', border: '1px solid var(--border)', borderRadius: '16px', padding: '32px', marginBottom: '24px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }}>
+          {/* File Upload */}
+          <div style={{ marginBottom: '24px' }}>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>Resume (PDF / DOCX) *</label>
+            <label htmlFor="ats-resume-upload" style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              padding: '28px 20px', border: resumeFile ? '2px solid var(--primary)' : '2px dashed var(--border)',
+              borderRadius: '12px', background: resumeFile ? 'var(--primary-light)' : '#F8F9FC',
+              cursor: 'pointer', transition: 'all 0.2s', textAlign: 'center',
+            }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={resumeFile ? 'var(--primary)' : 'var(--text-muted)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '8px' }}>
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/>
+              </svg>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: resumeFile ? 'var(--primary)' : 'var(--text-muted)' }}>
+                {resumeFile ? resumeFile.name : 'Click to upload resume'}
+              </span>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>PDF or DOCX, max 5MB</span>
+            </label>
+            <input id="ats-resume-upload" type="file" accept=".pdf,.docx" onChange={e => setResumeFile(e.target.files[0])} style={{ display: 'none' }} />
           </div>
-          <div className="form-group">
-            <label>Job Description</label>
-            <textarea value={jobDesc} onChange={e => setJobDesc(e.target.value)} placeholder="Paste the job description here…" style={{ minHeight: '100px' }} />
+
+          {/* Job Description */}
+          <div style={{ marginBottom: '24px' }}>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>Job Description</label>
+            <textarea value={jobDesc} onChange={e => setJobDesc(e.target.value)} placeholder="Paste the job description here…" style={{ width: '100%', minHeight: '120px', padding: '12px 16px', fontSize: '16px', border: '1.5px solid var(--border)', borderRadius: '10px', background: '#FFFFFF', color: 'var(--text)', fontFamily: 'var(--font-body)', outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s', resize: 'vertical' }} onFocus={e => { e.target.style.borderColor = 'var(--primary)'; e.target.style.boxShadow = '0 0 0 3px rgba(108,99,255,0.12)' }} onBlur={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.boxShadow = 'none' }} />
           </div>
-          <div className="form-group">
-            <label>Required Skills (comma-separated)</label>
-            <input value={reqSkills} onChange={e => setReqSkills(e.target.value)} placeholder="e.g. React, Node.js, TypeScript, Docker" />
+
+          {/* Required Skills */}
+          <div style={{ marginBottom: '28px' }}>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>Required Skills (comma-separated)</label>
+            <input value={reqSkills} onChange={e => setReqSkills(e.target.value)} placeholder="e.g. React, Node.js, TypeScript, Docker" style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '1.5px solid var(--border)', borderRadius: '10px', background: '#FFFFFF', color: 'var(--text)', fontFamily: 'var(--font-body)', outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s' }} onFocus={e => { e.target.style.borderColor = 'var(--primary)'; e.target.style.boxShadow = '0 0 0 3px rgba(108,99,255,0.12)' }} onBlur={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.boxShadow = 'none' }} />
           </div>
-          <button type="submit" className="btn btn-primary" disabled={loading || !resumeFile} style={{ width: '100%', justifyContent: 'center' }}>
-            {loading ? <><span className="spinner" style={{ width: '16px', height: '16px' }} /> Analyzing…</> : 'Analyze Resume'}
+
+          <button type="submit" className="btn btn-primary" disabled={loading || !resumeFile} style={{ width: '100%', justifyContent: 'center', padding: '14px 24px', fontSize: '15px', borderRadius: '10px', fontWeight: 700 }}>
+            {loading ? <><span className="spinner" style={{ width: '16px', height: '16px' }} /> Analyzing…</> : '🔍 Analyze Resume'}
           </button>
         </form>
 

@@ -311,36 +311,46 @@ export default function MockInterview() {
 
         {phase === 'setup' && (
           <>
-            <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-              <div style={{ width: '64px', height: '64px', background: 'var(--primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+              <div style={{ width: '72px', height: '72px', background: 'var(--gradient-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', borderRadius: '16px', boxShadow: '0 4px 16px rgba(108,99,255,0.25)' }}>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
               </div>
-              <h1 style={{ fontFamily: 'var(--font-head)', fontSize: '36px' }}>MOCK INTERVIEW</h1>
-              <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginTop: '8px' }}>Practice with AI-generated questions. Results are NOT saved to your profile.</p>
+              <h1 style={{ fontFamily: 'var(--font-head)', fontSize: '40px', letterSpacing: '0.02em' }}>MOCK INTERVIEW</h1>
+              <p style={{ color: 'var(--text-muted)', fontSize: '15px', marginTop: '8px', maxWidth: '360px', margin: '8px auto 0' }}>Practice with AI-generated questions. Results are <strong>not saved</strong> to your profile.</p>
             </div>
 
-            <form onSubmit={startMock} className="card" style={{ padding: '28px',  }}>
-              <div className="form-group">
-                <label>Job Title / Role</label>
-                <input value={jobTitle} onChange={e => setJobTitle(e.target.value)} placeholder="e.g. Frontend Developer" />
+            <form onSubmit={startMock} style={{ background: '#FFFFFF', border: '1px solid var(--border)', borderRadius: '16px', padding: '32px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }}>
+              <div style={{ marginBottom: '24px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>Job Title / Role</label>
+                <input value={jobTitle} onChange={e => setJobTitle(e.target.value)} placeholder="e.g. Frontend Developer" style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '1.5px solid var(--border)', borderRadius: '10px', background: '#FFFFFF', color: 'var(--text)', fontFamily: 'var(--font-body)', outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s' }} onFocus={e => { e.target.style.borderColor = 'var(--primary)'; e.target.style.boxShadow = '0 0 0 3px rgba(108,99,255,0.12)' }} onBlur={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.boxShadow = 'none' }} />
               </div>
-              <div className="form-group">
-                <label>Difficulty</label>
-                <div className="responsive-actions" style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ marginBottom: '28px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>Difficulty Level</label>
+                <div style={{ display: 'flex', gap: '10px' }}>
                   {[
-                    { key: 'basic', label: 'Basic', color: 'var(--success)' },
-                    { key: 'intermediate', label: 'Intermediate', color: 'var(--warning)' },
-                    { key: 'advanced', label: 'Advanced', color: 'var(--danger)' },
+                    { key: 'basic', label: 'Basic', icon: '🌱' },
+                    { key: 'intermediate', label: 'Intermediate', icon: '⚡' },
+                    { key: 'advanced', label: 'Advanced', icon: '🔥' },
                   ].map(d => (
-                    <button key={d.key} type="button" className={`btn ${difficulty === d.key ? 'btn-primary' : 'btn-ghost'}`} style={{ flex: 1, justifyContent: 'center', textTransform: 'capitalize', fontSize: '13px' }} onClick={() => setDifficulty(d.key)}>
+                    <button key={d.key} type="button" onClick={() => setDifficulty(d.key)} style={{
+                      flex: 1, padding: '14px 8px', fontSize: '13px', fontWeight: 600, fontFamily: 'var(--font-body)',
+                      border: difficulty === d.key ? '2px solid var(--primary)' : '1.5px solid var(--border)',
+                      background: difficulty === d.key ? 'var(--primary-light)' : '#FFFFFF',
+                      color: difficulty === d.key ? 'var(--primary)' : 'var(--text-muted)',
+                      borderRadius: '10px', cursor: 'pointer', transition: 'all 0.2s',
+                      boxShadow: difficulty === d.key ? '0 0 0 3px rgba(108,99,255,0.1)' : 'none',
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
+                    }}>
+                      <span style={{ fontSize: '20px' }}>{d.icon}</span>
                       {d.label}
                     </button>
                   ))}
                 </div>
               </div>
-              <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', justifyContent: 'center', marginTop: '8px', padding: '14px' }}>
-                {loading ? <><span className="spinner" style={{ width: '16px', height: '16px' }} /> Generating Questions...</> : 'Start Mock Interview'}
+              <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', justifyContent: 'center', padding: '14px 24px', fontSize: '15px', borderRadius: '10px', fontWeight: 700 }}>
+                {loading ? <><span className="spinner" style={{ width: '16px', height: '16px' }} /> Generating Questions…</> : '🚀 Start Mock Interview'}
               </button>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '12px' }}>5 questions · ~15 min · Voice & text answers</p>
             </form>
           </>
         )}
