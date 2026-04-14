@@ -95,8 +95,8 @@
 .spinner {
   width: 20px;
   height: 20px;
-  border: 3px solid var(--border, #EBEBEB);
-  border-top-color: var(--primary, #7353F6);
+  border: 3px solid var(--border, rgba(255,255,255,0.08));
+  border-top-color: var(--primary, #6C63FF);
   border-radius: 50%;
   display: inline-block;
   animation: spin 0.7s linear infinite;
@@ -104,8 +104,28 @@
 
 /* HR speak banner pulse */
 @keyframes pulse-bg {
-  0%, 100% { background: #7353F6; }
-  50%      { background: #5a3de0; }
+  0%, 100% { background: #6C63FF; }
+  50%      { background: #5A52E0; }
+}
+
+/* Gradient shimmer for loading states */
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.shimmer {
+  background: linear-gradient(90deg, var(--bg-glass) 25%, var(--bg-glass-hover) 50%, var(--bg-glass) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease infinite;
+}
+
+/* Glow pulse for active elements */
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 5px rgba(108,99,255,0.2), 0 0 20px rgba(108,99,255,0.1); }
+  50%      { box-shadow: 0 0 10px rgba(108,99,255,0.4), 0 0 40px rgba(108,99,255,0.15); }
+}
+.glow-pulse {
+  animation: glowPulse 2s ease-in-out infinite;
 }
 
 /* Reduced motion override */
