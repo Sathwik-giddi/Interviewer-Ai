@@ -121,8 +121,8 @@
 
 /* Glow pulse for active elements */
 @keyframes glowPulse {
-  0%, 100% { box-shadow: 0 0 3px rgba(108,99,255,0.1), 0 0 12px rgba(108,99,255,0.05); }
-  50%      { box-shadow: 0 0 6px rgba(108,99,255,0.2), 0 0 24px rgba(108,99,255,0.08); }
+  0%, 100% { box-shadow: 0 0 3px rgba(59,130,246,0.1), 0 0 12px rgba(59,130,246,0.05); }
+  50%      { box-shadow: 0 0 6px rgba(59,130,246,0.2), 0 0 24px rgba(59,130,246,0.08); }
 }
 .glow-pulse {
   animation: glowPulse 2s ease-in-out infinite;

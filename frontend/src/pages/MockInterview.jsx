@@ -312,7 +312,7 @@ export default function MockInterview() {
         {phase === 'setup' && (
           <>
             <div style={{ textAlign: 'center', marginBottom: '40px' }}>
-              <div style={{ width: '72px', height: '72px', background: 'var(--gradient-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', borderRadius: '16px', boxShadow: '0 4px 16px rgba(108,99,255,0.25)' }}>
+              <div style={{ width: '72px', height: '72px', background: 'var(--gradient-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', borderRadius: '16px', boxShadow: '0 4px 16px rgba(59,130,246,0.25)' }}>
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
               </div>
               <h1 style={{ fontFamily: 'var(--font-head)', fontSize: '40px', letterSpacing: '0.02em' }}>MOCK INTERVIEW</h1>
@@ -322,7 +322,7 @@ export default function MockInterview() {
             <form onSubmit={startMock} style={{ background: '#FFFFFF', border: '1px solid var(--border)', borderRadius: '16px', padding: '32px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }}>
               <div style={{ marginBottom: '24px' }}>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '8px' }}>Job Title / Role</label>
-                <input value={jobTitle} onChange={e => setJobTitle(e.target.value)} placeholder="e.g. Frontend Developer" style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '1.5px solid var(--border)', borderRadius: '10px', background: '#FFFFFF', color: 'var(--text)', fontFamily: 'var(--font-body)', outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s' }} onFocus={e => { e.target.style.borderColor = 'var(--primary)'; e.target.style.boxShadow = '0 0 0 3px rgba(108,99,255,0.12)' }} onBlur={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.boxShadow = 'none' }} />
+                <input value={jobTitle} onChange={e => setJobTitle(e.target.value)} placeholder="e.g. Frontend Developer" style={{ width: '100%', padding: '12px 16px', fontSize: '16px', border: '1.5px solid var(--border)', borderRadius: '10px', background: '#FFFFFF', color: 'var(--text)', fontFamily: 'var(--font-body)', outline: 'none', transition: 'border-color 0.2s, box-shadow 0.2s' }} onFocus={e => { e.target.style.borderColor = 'var(--primary)'; e.target.style.boxShadow = '0 0 0 3px rgba(59,130,246,0.12)' }} onBlur={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.boxShadow = 'none' }} />
               </div>
               <div style={{ marginBottom: '28px' }}>
                 <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '10px' }}>Difficulty Level</label>
@@ -338,7 +338,7 @@ export default function MockInterview() {
                       background: difficulty === d.key ? 'var(--primary-light)' : '#FFFFFF',
                       color: difficulty === d.key ? 'var(--primary)' : 'var(--text-muted)',
                       borderRadius: '10px', cursor: 'pointer', transition: 'all 0.2s',
-                      boxShadow: difficulty === d.key ? '0 0 0 3px rgba(108,99,255,0.1)' : 'none',
+                      boxShadow: difficulty === d.key ? '0 0 0 3px rgba(59,130,246,0.1)' : 'none',
                       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
                     }}>
                       <span style={{ fontSize: '20px' }}>{d.icon}</span>
