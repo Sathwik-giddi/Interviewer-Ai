@@ -23,13 +23,22 @@ import LinkRedirect from './pages/LinkRedirect'
 import NotFound from './pages/NotFound'
 
 function AppRoutes() {
-  const { currentUser, userRole } = useAuth()
+  const { currentUser, userRole, loading } = useAuth()
 
   return (
     <>
       <Navbar />
       <Routes>
-        <Route path="/" element={<Landing />} />
+        <Route
+          path="/"
+          element={
+            loading
+              ? <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)' }}><span className="spinner" style={{ width: '32px', height: '32px' }} /></div>
+              : currentUser
+                ? <Navigate to={userRole === 'hr' ? '/hr' : '/candidate'} replace />
+                : <Landing />
+          }
+        />
 
         {/* Auth pages — redirect logged-in users */}
         <Route

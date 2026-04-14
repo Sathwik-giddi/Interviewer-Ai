@@ -54,7 +54,7 @@ export default function HRReports() {
       const ev = session.evaluation || {}
 
       doc.setFontSize(20)
-      doc.text('AI INTERVIEWER - EVALUATION REPORT', 14, 22)
+      doc.text('CANVUE - EVALUATION REPORT', 14, 22)
       doc.setFontSize(12)
       doc.text(`Candidate: ${session.candidateName || 'Unknown'}`, 14, 35)
       doc.text(`Date: ${session.startedAt?.toDate ? session.startedAt.toDate().toLocaleString() : 'N/A'}`, 14, 42)

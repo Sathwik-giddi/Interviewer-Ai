@@ -1422,7 +1422,7 @@ export default function InterviewRoom() {
         </div>
 
         <div style={S.videoBox}>
-          <div style={S.videoLabel}><span>AI INTERVIEWER</span>{aiSpeaking && <span style={{ color: 'var(--primary)', fontSize: '10px' }}>● SPEAKING</span>}</div>
+          <div style={S.videoLabel}><span>CANVUE AI</span>{aiSpeaking && <span style={{ color: 'var(--primary)', fontSize: '10px' }}>● SPEAKING</span>}</div>
           <div style={{ ...S.aiAvatar, padding: '12px 0' }}>
             <TalkingAvatar isSpeaking={aiSpeaking} size={90} />
           </div>

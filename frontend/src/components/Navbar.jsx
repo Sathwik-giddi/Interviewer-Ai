@@ -45,7 +45,7 @@ export default function Navbar() {
           <span style={styles.logoIcon}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           </span>
-          AI<span style={{ color: 'var(--primary)' }}>INTERVIEWER</span>
+          CAN<span style={{ color: 'var(--primary)' }}>VUE</span>
         </Link>
         <button
           type="button"

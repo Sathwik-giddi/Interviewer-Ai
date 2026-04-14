@@ -96,7 +96,7 @@ export default function Landing() {
             </div>
             <h1 className="fade-up" style={styles.heroTitle}>
               THE SMARTEST<br />
-              <span className="gradient-text">AI INTERVIEWER</span><br />
+              <span className="gradient-text">CANVUE</span><br />
               YOU'VE EVER MET
             </h1>
             <p className="fade-up" style={styles.heroSub}>
@@ -244,7 +244,7 @@ export default function Landing() {
             </div>
             <div style={{ width: '1px', background: 'var(--border)' }} />
             <div style={styles.compCol}>
-              <div style={{ ...styles.compHeader, color: 'var(--primary)' }}>AI Interviewer</div>
+              <div style={{ ...styles.compHeader, color: 'var(--primary)' }}>Canvue</div>
               {COMPARISON.map(([, neu], i) => (
                 <div key={i} className="fade-up" style={styles.compRow}>
                   <span style={{ color: 'var(--primary)', marginRight: '12px', fontSize: '16px' }}>&#x2713;</span> {neu}
@@ -280,10 +280,10 @@ export default function Landing() {
       <footer style={styles.footer}>
         <div className="container" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <span style={{ fontFamily: 'var(--font-head)', fontSize: '18px', letterSpacing: '0.06em' }}>
-            AI<span style={{ color: 'var(--primary)' }}>INTERVIEWER</span>
+            CAN<span style={{ color: 'var(--primary)' }}>VUE</span>
           </span>
           <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            &copy; {new Date().getFullYear()} AI Interviewer.
+            &copy; {new Date().getFullYear()} Canvue.
           </span>
         </div>
       </footer>
