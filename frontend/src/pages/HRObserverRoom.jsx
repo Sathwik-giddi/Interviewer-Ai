@@ -13,6 +13,7 @@ import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
 import { io } from 'socket.io-client'
 import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
+import { getSocketAuth } from '../lib/socketAuth'
 import { buildRtcConfig, getTurnIceServers } from '../utils/turnUtils'
 import { getSelectedCandidatePairInfo } from '../lib/webrtcConfig'
 
@@ -182,133 +183,147 @@ export default function HRObserverRoom() {
 
   /* ═══════════════════ SOCKET + WEBRTC ═══════════════════ */
   useEffect(() => {
-    const socket = io(SIGNAL, { transports: ['websocket', 'polling'], reconnection: true })
-    socketRef.current = socket
+    let socket = null
+    let cancelled = false
 
-    socket.on('connect', () => {
-      setConnected(true)
-      socket.emit('join-room', { roomId: campaignId, userId: currentUser.uid, role: 'hr' })
-      addLog('system', 'Connected as HR observer.')
-    })
-    socket.on('disconnect', () => { setConnected(false); addLog('system', 'Disconnected.') })
+    async function connectSocket() {
+      const authOpts = await getSocketAuth(currentUser)
+      if (cancelled) return
+      socket = io(SIGNAL, { transports: ['websocket', 'polling'], reconnection: true, auth: authOpts })
+      socketRef.current = socket
 
-    // Candidate
-    socket.on('peer-joined', ({ role }) => {
-      if (role === 'candidate') {
-        setCandidatePresent(true)
-        addLog('system', 'Candidate joined.')
-        waitingForOfferRef.current = false
-        requestCandidateStream({ resetAttempts: true })
-      }
-    })
-    socket.on('room-state', ({ hasCandidate }) => {
-      setCandidatePresent(hasCandidate)
-      if (hasCandidate) {
-        addLog('system', 'Candidate in room.')
-        requestCandidateStream({ resetAttempts: true })
-      }
-    })
-    socket.on('peer-left', ({ role }) => {
-      if (role === 'candidate') {
-        setCandidatePresent(false)
-        setStreamActive(false)
-        streamRetryCountRef.current = 0
-        waitingForOfferRef.current = false
-        addLog('system', 'Candidate left.')
-      }
-    })
+      socket.on('connect', () => {
+        setConnected(true)
+        socket.emit('join-room', { roomId: campaignId, userId: currentUser.uid, role: 'hr' })
+        addLog('system', 'Connected as HR observer.')
+      })
+      socket.on('disconnect', () => { setConnected(false); addLog('system', 'Disconnected.') })
+      socket.on('connect_error', (err) => {
+        console.warn('[Socket] Connection error:', err.message)
+        addLog('system', `Connection error: ${err.message}`)
+      })
 
-    // WebRTC
-    socket.on('offer', async ({ from, offer }) => {
-      waitingForOfferRef.current = false
-      const pc = await createPC(from)
-      await pc.setRemoteDescription(new RTCSessionDescription(offer))
-      for (const c of pendingCandidates.current) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
-      pendingCandidates.current = []
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-      socket.emit('answer', { to: from, answer })
-    })
-    socket.on('answer', async ({ answer }) => {
-      if (peerRef.current?.signalingState === 'have-local-offer')
-        await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer))
-    })
-    socket.on('ice-candidate', async ({ candidate }) => {
-      if (peerRef.current?.remoteDescription) await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
-      else pendingCandidates.current.push(candidate)
-    })
-
-    // HR speak accepted
-    socket.on('hr-speak-accepted', () => { setSpeaking(true); setSpeakRequested(false); enableMic(); addLog('system', 'Speaking to candidate — AI paused.') })
-
-    // Candidate's WebRTC answer for HR's two-way media offer
-    socket.on('candidate-answer', async ({ from, answer }) => {
-      if (hrSpeakPcRef.current?.signalingState === 'have-local-offer') {
-        try {
-          await hrSpeakPcRef.current.setRemoteDescription(new RTCSessionDescription(answer))
-          console.log('[WebRTC] HR received candidate answer — two-way connection establishing')
-        } catch (err) {
-          console.error('[WebRTC] Failed to set candidate answer:', err)
+      // Candidate
+      socket.on('peer-joined', ({ role }) => {
+        if (role === 'candidate') {
+          setCandidatePresent(true)
+          addLog('system', 'Candidate joined.')
+          waitingForOfferRef.current = false
+          requestCandidateStream({ resetAttempts: true })
         }
-      }
-    })
-
-    // ICE candidates from candidate for the HR speak peer connection
-    socket.on('hr-ice-candidate', async ({ candidate }) => {
-      if (hrSpeakPcRef.current && candidate) {
-        try {
-          await hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
-        } catch (err) {
-          console.warn('[WebRTC] Failed to add HR ICE candidate:', err)
+      })
+      socket.on('room-state', ({ hasCandidate }) => {
+        setCandidatePresent(hasCandidate)
+        if (hasCandidate) {
+          addLog('system', 'Candidate in room.')
+          requestCandidateStream({ resetAttempts: true })
         }
+      })
+      socket.on('peer-left', ({ role }) => {
+        if (role === 'candidate') {
+          setCandidatePresent(false)
+          setStreamActive(false)
+          streamRetryCountRef.current = 0
+          waitingForOfferRef.current = false
+          addLog('system', 'Candidate left.')
+        }
+      })
+
+      // WebRTC
+      socket.on('offer', async ({ from, offer }) => {
+        waitingForOfferRef.current = false
+        const pc = await createPC(from)
+        await pc.setRemoteDescription(new RTCSessionDescription(offer))
+        for (const c of pendingCandidates.current) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
+        pendingCandidates.current = []
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        socket.emit('answer', { to: from, answer })
+      })
+      socket.on('answer', async ({ answer }) => {
+        if (peerRef.current?.signalingState === 'have-local-offer')
+          await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+      })
+      socket.on('ice-candidate', async ({ candidate }) => {
+        if (peerRef.current?.remoteDescription) await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
+        else pendingCandidates.current.push(candidate)
+      })
+
+      // HR speak accepted
+      socket.on('hr-speak-accepted', () => { setSpeaking(true); setSpeakRequested(false); enableMic(); addLog('system', 'Speaking to candidate — AI paused.') })
+
+      // Candidate's WebRTC answer for HR's two-way media offer
+      socket.on('candidate-answer', async ({ from, answer }) => {
+        if (hrSpeakPcRef.current?.signalingState === 'have-local-offer') {
+          try {
+            await hrSpeakPcRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+            console.log('[WebRTC] HR received candidate answer — two-way connection establishing')
+          } catch (err) {
+            console.error('[WebRTC] Failed to set candidate answer:', err)
+          }
+        }
+      })
+
+      // ICE candidates from candidate for the HR speak peer connection
+      socket.on('hr-ice-candidate', async ({ candidate }) => {
+        if (hrSpeakPcRef.current && candidate) {
+          try {
+            await hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+          } catch (err) {
+            console.warn('[WebRTC] Failed to add HR ICE candidate:', err)
+          }
+        }
+      })
+
+      // Interview state relay
+      socket.on('interview-state', (data) => setInterviewState(data))
+      socket.on('candidate-typing', (data) => { setCandidateAnswer(data.currentAnswer || ''); setAnswerType(data.answerType || 'text') })
+      socket.on('ai-speaking', (data) => addLog('ai', `Asking: "${data.question.substring(0, 80)}${data.question.length > 80 ? '…' : ''}"`))
+      socket.on('answer-submitted', (data) => {
+        setSubmittedAnswers(prev => [...prev, { qIndex: data.qIndex, answer: data.answer }])
+        setCandidateAnswer('')
+        addLog('candidate', `Answered Q${data.qIndex + 1}`)
+      })
+
+      // Proctoring
+      const handleProctoringAlert = (payload = {}) => {
+        const warning = typeof payload === 'string'
+          ? payload
+          : payload.warning || payload.message || payload.alert || payload.text
+        const ts = new Date().toLocaleTimeString()
+        appendAlert(warning, ts)
+        applyAlertToProctoringState(warning)
       }
-    })
+      socket.on('proctoring-alert', handleProctoringAlert)
 
-    // Interview state relay
-    socket.on('interview-state', (data) => setInterviewState(data))
-    socket.on('candidate-typing', (data) => { setCandidateAnswer(data.currentAnswer || ''); setAnswerType(data.answerType || 'text') })
-    socket.on('ai-speaking', (data) => addLog('ai', `Asking: "${data.question.substring(0, 80)}${data.question.length > 80 ? '…' : ''}"`))
-    socket.on('answer-submitted', (data) => {
-      setSubmittedAnswers(prev => [...prev, { qIndex: data.qIndex, answer: data.answer }])
-      setCandidateAnswer('')
-      addLog('candidate', `Answered Q${data.qIndex + 1}`)
-    })
+      // Proctoring state — mood + objects
+      const handleProctoringState = (data = {}) => {
+        const nextMood = extractMood(data)
+        const nextObjects = extractObjects(data)
+        const warnings = extractWarnings(data)
 
-    // Proctoring
-    const handleProctoringAlert = (payload = {}) => {
-      const warning = typeof payload === 'string'
-        ? payload
-        : payload.warning || payload.message || payload.alert || payload.text
-      const ts = new Date().toLocaleTimeString()
-      appendAlert(warning, ts)
-      applyAlertToProctoringState(warning)
+        if (nextMood) setCandidateMood(nextMood)
+        if (nextObjects) setCandidateObjects(nextObjects)
+        warnings.forEach(warning => applyAlertToProctoringState(warning))
+      }
+      socket.on('proctoring-state', handleProctoringState)
+      socket.on('proctoring-update', handleProctoringState)
+      socket.on('candidate-mood', handleProctoringState)
+      socket.on('object-detection', handleProctoringState)
+
+      // Custom question spoken confirmation
+      socket.on('hr-question-spoken', () => { addLog('system', 'Custom question delivered to candidate.') })
+
+      // End
+      socket.on('interview-ended', () => { setSessionEnded(true); addLog('system', 'Interview ended.') })
     }
-    socket.on('proctoring-alert', handleProctoringAlert)
 
-    // Proctoring state — mood + objects
-    const handleProctoringState = (data = {}) => {
-      const nextMood = extractMood(data)
-      const nextObjects = extractObjects(data)
-      const warnings = extractWarnings(data)
-
-      if (nextMood) setCandidateMood(nextMood)
-      if (nextObjects) setCandidateObjects(nextObjects)
-      warnings.forEach(warning => applyAlertToProctoringState(warning))
-    }
-    socket.on('proctoring-state', handleProctoringState)
-    socket.on('proctoring-update', handleProctoringState)
-    socket.on('candidate-mood', handleProctoringState)
-    socket.on('object-detection', handleProctoringState)
-
-    // Custom question spoken confirmation
-    socket.on('hr-question-spoken', () => { addLog('system', 'Custom question delivered to candidate.') })
-
-    // End
-    socket.on('interview-ended', () => { setSessionEnded(true); addLog('system', 'Interview ended.') })
+    connectSocket()
 
     return () => {
+      cancelled = true
       clearInterval(streamRetryTimerRef.current)
-      socket.disconnect()
+      socket?.disconnect()
       peerRef.current?.close()
       hrSpeakPcRef.current?.close()
       localStreamRef.current?.getTracks().forEach(t => t.stop())
@@ -862,7 +877,7 @@ const S = {
   videoBox: { borderBottom: '1px solid var(--border)', background: '#1a1a2e', position: 'relative', flexShrink: 0 },
   video: { width: '100%', aspectRatio: '16/9', objectFit: 'cover', display: 'block' },
   noVideo: { width: '100%', aspectRatio: '16/9', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#1a1a2e', color: 'var(--text-muted)' },
-  liveOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(135deg, rgba(108,99,255,0.9), rgba(90,82,224,0.9))', color: '#fff', padding: '8px 12px', fontSize: '12px', fontWeight: 700, textAlign: 'center', borderRadius: '0' },
+  liveOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(135deg, rgba(59,130,246,0.9), rgba(90,82,224,0.9))', color: '#fff', padding: '8px 12px', fontSize: '12px', fontWeight: 700, textAlign: 'center', borderRadius: '0' },
   infoBox: { padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)', flexShrink: 0 },
   controls: { padding: '14px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle)', flexShrink: 0 },
   rightPanel: { display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' },

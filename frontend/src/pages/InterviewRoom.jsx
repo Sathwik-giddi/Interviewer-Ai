@@ -8,6 +8,7 @@ import VoiceSelector from '../components/VoiceSelector'
 import ProctoringAlert from '../components/ProctoringAlert'
 import { useToast } from '../components/Toast'
 import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
+import { getSocketAuth } from '../lib/socketAuth'
 import { buildRtcConfig, getTurnIceServers } from '../utils/turnUtils'
 import { getSelectedCandidatePairInfo, hasTurnConfig } from '../lib/webrtcConfig'
 
@@ -483,164 +484,180 @@ export default function InterviewRoom() {
 
   /* ═══════════════════ SOCKET.IO + WEBRTC ═══════════════════ */
   useEffect(() => {
-    const socket = io(SIGNAL, { transports: ['websocket', 'polling'], reconnection: true })
-    socketRef.current = socket
+    let socket = null
+    let cancelled = false
 
-    socket.on('connect', () => {
-      setSocketConnected(true)
-      socket.emit('join-room', { roomId, userId, role: 'candidate' })
-    })
-    socket.on('disconnect', () => setSocketConnected(false))
+    async function connectSocket() {
+      const authOpts = await getSocketAuth(currentUser)
+      if (cancelled) return
+      socket = io(SIGNAL, { transports: ['websocket', 'polling'], reconnection: true, auth: authOpts })
+      socketRef.current = socket
 
-    // HR observer joined — send them our stream
-    socket.on('peer-joined', ({ role, socketId }) => {
-      if (role === 'hr') sendStreamToPeer(socketId)
-    })
+      socket.on('connect', () => {
+        setSocketConnected(true)
+        socket.emit('join-room', { roomId, userId, role: 'candidate' })
+      })
+      socket.on('disconnect', () => setSocketConnected(false))
+      socket.on('connect_error', (err) => {
+        console.warn('[Socket] Connection error:', err.message)
+      })
 
-    // HR requested our stream (in case they joined before us or reconnected)
-    socket.on('send-stream', ({ to, forceRelay }) => {
-      sendStreamToPeer(to, { forceRelay: Boolean(forceRelay) })
-    })
+      // HR observer joined — send them our stream
+      socket.on('peer-joined', ({ role, socketId }) => {
+        if (role === 'hr') sendStreamToPeer(socketId)
+      })
 
-    // WebRTC signaling
-    socket.on('offer', async ({ from, offer }) => {
-      const pc = await createPC(from)
-      await pc.setRemoteDescription(new RTCSessionDescription(offer))
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-      socket.emit('answer', { to: from, answer })
-    })
-    socket.on('answer', async ({ answer }) => {
-      if (peerRef.current?.signalingState === 'have-local-offer')
-        await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer))
-    })
-    socket.on('ice-candidate', ({ candidate }) => {
-      peerRef.current?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
-    })
+      // HR requested our stream (in case they joined before us or reconnected)
+      socket.on('send-stream', ({ to, forceRelay }) => {
+        sendStreamToPeer(to, { forceRelay: Boolean(forceRelay) })
+      })
 
-    // Room locked — another candidate is already using this link
-    socket.on('room-locked', ({ message }) => {
-      setRoomLocked(true)
-      toast.error(message)
-    })
-
-    // HR speak
-    socket.on('hr-speak-request', () => { setHrSpeakRequest(true); stopSpeaking() })
-    socket.on('hr-speak-end', () => {
-      setHrSpeaking(false); setHrSpeakRequest(false); setHrCustomQuestion(null)
-      // Close the HR speak peer connection and clean up
-      hrSpeakPcRef.current?.close()
-      hrSpeakPcRef.current = null
-      hrSpeakPendingCandidatesRef.current = []
-      if (hrVideoRef.current) hrVideoRef.current.srcObject = null
-      console.log('[WebRTC] HR speak peer connection closed')
-    })
-
-    // ── HR two-way audio/video signaling ──
-    // HR sends a WebRTC offer when they start speaking (after candidate accepts)
-    socket.on('hr-offer', async ({ from, offer }) => {
-      console.log('[WebRTC] Received HR offer for two-way media')
-      try {
-        // Close any previous HR speak peer connection
-        hrSpeakPcRef.current?.close()
-        hrSpeakPendingCandidatesRef.current = []
-
-        const config = await buildRtcConfig()
-        const pc = new RTCPeerConnection(config)
-        hrSpeakPcRef.current = pc
-
-        // Add candidate's local tracks so HR can see/hear candidate
-        const localStream = localStreamRef.current
-        if (localStream) {
-          localStream.getTracks().forEach(track => pc.addTrack(track, localStream))
-        }
-
-        // Handle remote tracks from HR (audio + video)
-        pc.ontrack = ({ streams }) => {
-          console.log('[WebRTC] Received HR remote tracks')
-          if (streams[0]) {
-            // Play HR's audio
-            if (hrAudioRef.current) {
-              hrAudioRef.current.srcObject = streams[0]
-              playElement(hrAudioRef.current)
-            }
-            // Display HR's video in the small overlay
-            if (hrVideoRef.current) {
-              hrVideoRef.current.srcObject = streams[0]
-              playElement(hrVideoRef.current)
-            }
-          }
-        }
-
-        // Exchange ICE candidates via hr-ice-candidate event
-        pc.onicecandidate = ({ candidate }) => {
-          if (candidate) {
-            socket.emit('hr-ice-candidate', { to: from, candidate })
-          }
-        }
-
-        pc.onconnectionstatechange = () => {
-          if (pc.connectionState === 'connected') {
-            console.log('[WebRTC] HR two-way connection established')
-          }
-          if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-            console.warn('[WebRTC] HR two-way connection', pc.connectionState)
-          }
-        }
-
-        // Set remote description (HR's offer) and create answer
+      // WebRTC signaling
+      socket.on('offer', async ({ from, offer }) => {
+        const pc = await createPC(from)
         await pc.setRemoteDescription(new RTCSessionDescription(offer))
-
-        // Add any pending ICE candidates
-        for (const c of hrSpeakPendingCandidatesRef.current) {
-          await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
-        }
-        hrSpeakPendingCandidatesRef.current = []
-
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
+        socket.emit('answer', { to: from, answer })
+      })
+      socket.on('answer', async ({ answer }) => {
+        if (peerRef.current?.signalingState === 'have-local-offer')
+          await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+      })
+      socket.on('ice-candidate', ({ candidate }) => {
+        peerRef.current?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
+      })
 
-        // Send answer back to HR via candidate-answer event
-        socket.emit('candidate-answer', { to: from, answer })
-        console.log('[WebRTC] Sent candidate answer to HR for two-way media')
-      } catch (err) {
-        console.error('[WebRTC] Failed to handle HR offer:', err)
-      }
-    })
+      // Room locked — another candidate is already using this link
+      socket.on('room-locked', ({ message }) => {
+        setRoomLocked(true)
+        toast.error(message)
+      })
 
-    // ICE candidates from HR for the two-way peer connection
-    socket.on('hr-ice-candidate', async ({ candidate }) => {
-      if (hrSpeakPcRef.current?.remoteDescription) {
+      // HR speak
+      socket.on('hr-speak-request', () => { setHrSpeakRequest(true); stopSpeaking() })
+      socket.on('hr-speak-end', () => {
+        setHrSpeaking(false); setHrSpeakRequest(false); setHrCustomQuestion(null)
+        // Close the HR speak peer connection and clean up
+        hrSpeakPcRef.current?.close()
+        hrSpeakPcRef.current = null
+        hrSpeakPendingCandidatesRef.current = []
+        if (hrVideoRef.current) hrVideoRef.current.srcObject = null
+        console.log('[WebRTC] HR speak peer connection closed')
+      })
+
+      // ── HR two-way audio/video signaling ──
+      // HR sends a WebRTC offer when they start speaking (after candidate accepts)
+      socket.on('hr-offer', async ({ from, offer }) => {
+        console.log('[WebRTC] Received HR offer for two-way media')
         try {
-          await hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+          // Close any previous HR speak peer connection
+          hrSpeakPcRef.current?.close()
+          hrSpeakPendingCandidatesRef.current = []
+
+          const config = await buildRtcConfig()
+          const pc = new RTCPeerConnection(config)
+          hrSpeakPcRef.current = pc
+
+          // Add candidate's local tracks so HR can see/hear candidate
+          const localStream = localStreamRef.current
+          if (localStream) {
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream))
+          }
+
+          // Handle remote tracks from HR (audio + video)
+          pc.ontrack = ({ streams }) => {
+            console.log('[WebRTC] Received HR remote tracks')
+            if (streams[0]) {
+              // Play HR's audio
+              if (hrAudioRef.current) {
+                hrAudioRef.current.srcObject = streams[0]
+                playElement(hrAudioRef.current)
+              }
+              // Display HR's video in the small overlay
+              if (hrVideoRef.current) {
+                hrVideoRef.current.srcObject = streams[0]
+                playElement(hrVideoRef.current)
+              }
+            }
+          }
+
+          // Exchange ICE candidates via hr-ice-candidate event
+          pc.onicecandidate = ({ candidate }) => {
+            if (candidate) {
+              socket.emit('hr-ice-candidate', { to: from, candidate })
+            }
+          }
+
+          pc.onconnectionstatechange = () => {
+            if (pc.connectionState === 'connected') {
+              console.log('[WebRTC] HR two-way connection established')
+            }
+            if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+              console.warn('[WebRTC] HR two-way connection', pc.connectionState)
+            }
+          }
+
+          // Set remote description (HR's offer) and create answer
+          await pc.setRemoteDescription(new RTCSessionDescription(offer))
+
+          // Add any pending ICE candidates
+          for (const c of hrSpeakPendingCandidatesRef.current) {
+            await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
+          }
+          hrSpeakPendingCandidatesRef.current = []
+
+          const answer = await pc.createAnswer()
+          await pc.setLocalDescription(answer)
+
+          // Send answer back to HR via candidate-answer event
+          socket.emit('candidate-answer', { to: from, answer })
+          console.log('[WebRTC] Sent candidate answer to HR for two-way media')
         } catch (err) {
-          console.warn('[WebRTC] Failed to add HR ICE candidate:', err)
+          console.error('[WebRTC] Failed to handle HR offer:', err)
         }
-      } else {
-        // Buffer until remote description is set
-        hrSpeakPendingCandidatesRef.current.push(candidate)
-      }
-    })
+      })
 
-    // HR custom question — HR takes over from AI and asks their own question
-    socket.on('hr-custom-question', ({ question }) => {
-      setHrCustomQuestion(question)
-      setHrSpeaking(false) // Allow candidate to answer
-      stopSpeaking()
-      setTextAnswer('')
-      setCodeValue('')
-      toast.info('HR asked a custom question')
-    })
+      // ICE candidates from HR for the two-way peer connection
+      socket.on('hr-ice-candidate', async ({ candidate }) => {
+        if (hrSpeakPcRef.current?.remoteDescription) {
+          try {
+            await hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
+          } catch (err) {
+            console.warn('[WebRTC] Failed to add HR ICE candidate:', err)
+          }
+        } else {
+          // Buffer until remote description is set
+          hrSpeakPendingCandidatesRef.current.push(candidate)
+        }
+      })
 
-    // HR question audio — play TTS audio of HR's custom question
-    socket.on('hr-question-audio', ({ audioUrl }) => {
-      if (audioUrl && audioRef.current) {
-        audioRef.current.src = audioUrl.startsWith('http') ? audioUrl : `${BACKEND}${audioUrl}`
-        audioRef.current.play().catch(() => {})
-      }
-    })
+      // HR custom question — HR takes over from AI and asks their own question
+      socket.on('hr-custom-question', ({ question }) => {
+        setHrCustomQuestion(question)
+        setHrSpeaking(false) // Allow candidate to answer
+        stopSpeaking()
+        setTextAnswer('')
+        setCodeValue('')
+        toast.info('HR asked a custom question')
+      })
 
-    return () => { socket.disconnect(); peerRef.current?.close() }
+      // HR question audio — play TTS audio of HR's custom question
+      socket.on('hr-question-audio', ({ audioUrl }) => {
+        if (audioUrl && audioRef.current) {
+          audioRef.current.src = audioUrl.startsWith('http') ? audioUrl : `${BACKEND}${audioUrl}`
+          audioRef.current.play().catch(() => {})
+        }
+      })
+    }
+
+    connectSocket()
+
+    return () => {
+      cancelled = true
+      socket?.disconnect()
+      peerRef.current?.close()
+    }
   }, [roomId])
 
   useEffect(() => {
@@ -1784,7 +1801,7 @@ const S = {
   video: { width: '100%', aspectRatio: '16/9', objectFit: 'cover', display: 'block', background: '#1a1a2e' },
   procOverlay: { position: 'absolute', bottom: '8px', left: '8px', right: '8px', display: 'flex', flexDirection: 'column', gap: '4px' },
   procWarn: { color: '#fff', padding: '6px 10px', fontSize: '12px', fontWeight: 600, borderRadius: '8px' },
-  aiAvatar: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '90px', background: 'linear-gradient(135deg, rgba(108,99,255,0.08) 0%, rgba(0,212,255,0.04) 100%)', position: 'relative', transition: 'background 0.4s ease' },
+  aiAvatar: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '90px', background: 'linear-gradient(135deg, rgba(59,130,246,0.08) 0%, rgba(0,212,255,0.04) 100%)', position: 'relative', transition: 'background 0.4s ease' },
   avatarCircle: { width: '64px', height: '64px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontFamily: 'var(--font-head)', fontSize: '24px', letterSpacing: '0.1em', transition: 'all 0.3s ease', zIndex: 1 },
   soundWaves: { position: 'absolute', bottom: '16px', display: 'flex', gap: '3px', alignItems: 'flex-end' },
   wave: { width: '3px', background: '#fff', borderRadius: '2px', animation: 'wave 0.6s ease-in-out infinite alternate', display: 'block' },
