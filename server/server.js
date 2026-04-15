@@ -7,6 +7,7 @@ const { Server }    = require('socket.io')
 const cors          = require('cors')
 const rateLimit     = require('express-rate-limit')
 const admin         = require('firebase-admin')
+const roomStore     = require('./roomStore')
 
 // ─── Validate required environment variables ─────────────────────────────────
 const REQUIRED_ENV = ['METERED_API_KEY', 'TURN_USERNAME', 'TURN_CREDENTIAL']
@@ -34,7 +35,6 @@ if (!admin.apps.length) {
       const serviceAccount = require(FIREBASE_SERVICE_ACCOUNT_PATH)
       admin.initializeApp({ credential: admin.credential.cert(serviceAccount) })
     } else {
-      // Fall back to Application Default Credentials (e.g. in GCP / CI)
       admin.initializeApp({ credential: admin.credential.applicationDefault() })
     }
     console.log('[Firebase] Admin SDK initialized')
@@ -59,29 +59,38 @@ app.use(cors({ origin: CLIENT_ORIGIN }))
 
 // ─── Rate limiting ──────────────────────────────────────────────────────────
 const turnLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
+  windowMs: 60 * 1000,
   max: 5,
   message: { error: 'Too many TURN credential requests. Try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 })
 
+async function authenticateRequest(req) {
+  const authHeader = req.headers.authorization
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null
+  try {
+    const decoded = await admin.auth().verifyIdToken(authHeader.slice(7))
+    return decoded
+  } catch {
+    return null
+  }
+}
+
 // ─── TURN credentials ───────────────────────────────────────────────────────
 let turnCredentialsCache = {
   credentials: null,
   expiresAt: 0,
 }
-const CACHE_TTL_MS = 23 * 60 * 60 * 1000 // 23 hours (dynamic credentials expire at 24h)
+const CACHE_TTL_MS = 23 * 60 * 60 * 1000
 
 async function getTurnCredentials() {
   const now = Date.now()
 
-  // Return cached credentials if still valid
   if (turnCredentialsCache.credentials && turnCredentialsCache.expiresAt > now) {
     return turnCredentialsCache.credentials
   }
 
-  // Fetch dynamic credentials from Metered API
   try {
     const response = await fetch(METERED_API_URL, {
       method: 'GET',
@@ -103,7 +112,6 @@ async function getTurnCredentials() {
     console.warn('[TURN] Dynamic API failed:', err.message)
   }
 
-  // No static fallback — fail explicitly in production
   return null
 }
 
@@ -116,7 +124,6 @@ const DEMO_HR_SECRET = process.env.DEMO_HR_SECRET
 
 app.post('/api/auth/custom-token', express.json(), async (req, res) => {
   const { secret } = req.body || {}
-  // Require a shared secret to prevent token forgery
   if (!DEMO_HR_SECRET || secret !== DEMO_HR_SECRET) {
     return res.status(403).json({ error: 'Forbidden' })
   }
@@ -131,6 +138,8 @@ app.post('/api/auth/custom-token', express.json(), async (req, res) => {
 
 // ─── TURN credential endpoints ──────────────────────────────────────────────
 app.get('/api/turn-credentials', turnLimiter, async (req, res) => {
+  const user = await authenticateRequest(req)
+  if (!user) return res.status(401).json({ error: 'Authentication required' })
   const iceServers = await getTurnCredentials()
   if (!iceServers) {
     return res.status(500).json({
@@ -152,6 +161,8 @@ app.get('/api/turn-credentials/validate', (req, res) => {
 })
 
 app.post('/api/turn-credentials/refresh', turnLimiter, async (req, res) => {
+  const user = await authenticateRequest(req)
+  if (!user) return res.status(401).json({ error: 'Authentication required' })
   turnCredentialsCache = { credentials: null, expiresAt: 0 }
   const iceServers = await getTurnCredentials()
   if (!iceServers) {
@@ -160,31 +171,8 @@ app.post('/api/turn-credentials/refresh', turnLimiter, async (req, res) => {
   res.json({ success: true, expiresAt: turnCredentialsCache.expiresAt })
 })
 
-// ─── Room state ─────────────────────────────────────────────────────────────
-/**
- * rooms[roomId] = {
- *   candidate: socketId | null,
- *   hr:        socketId | null,
- *   observers: Set<socketId>,
- *   candidateLocked: boolean,
- * }
- */
-const rooms = {}
-const observerAliases = new Map()
-
-/** roomSockets: roomId -> Set(socketId) — tracks all sockets in each room */
+// ─── Room state (backed by roomStore — Redis + in-memory cache) ─────────────
 const roomSockets = new Map()
-
-function getRoom(roomId) {
-  return rooms[roomId] || null
-}
-
-function getOrCreateRoom(roomId) {
-  if (!rooms[roomId]) {
-    rooms[roomId] = { candidate: null, hr: null, observers: new Set(), candidateLocked: false }
-  }
-  return rooms[roomId]
-}
 
 function addSocketToRoom(roomId, socketId) {
   if (!roomSockets.has(roomId)) {
@@ -205,8 +193,8 @@ function isSocketInRoom(roomId, socketId) {
   return roomSockets.get(roomId)?.has(socketId) || false
 }
 
-function resolveRoomId(roomId) {
-  return observerAliases.get(roomId) || roomId
+async function resolveRoomId(roomId) {
+  return (await roomStore.getAlias(roomId)) || roomId
 }
 
 // ─── Per-socket rate limiting ───────────────────────────────────────────────
@@ -222,12 +210,11 @@ function checkSocketRateLimit(socketId, event, maxPerSecond = 10) {
   }
   entry.count++
   if (entry.count > maxPerSecond) {
-    return false // rate limited
+    return false
   }
   return true
 }
 
-// Clean up stale rate limit entries every minute
 setInterval(() => {
   const now = Date.now()
   for (const [key, entry] of socketRateLimits.entries()) {
@@ -236,16 +223,6 @@ setInterval(() => {
     }
   }
 }, 60 * 1000)
-
-// ─── Periodic cleanup of stale observer aliases ─────────────────────────────
-setInterval(() => {
-  for (const [aliasRoomId, sourceRoomId] of observerAliases.entries()) {
-    if (!rooms[sourceRoomId]) {
-      observerAliases.delete(aliasRoomId)
-      console.log(`[Signaling] Cleaned up stale alias: ${aliasRoomId} → ${sourceRoomId}`)
-    }
-  }
-}, 10 * 60 * 1000)
 
 // ─── Socket authentication middleware ───────────────────────────────────────
 io.use(async (socket, next) => {
@@ -260,7 +237,6 @@ io.use(async (socket, next) => {
     socket.data.uid = decoded.uid
     socket.data.email = decoded.email || null
 
-    // Fetch user role from Firestore
     const userDoc = await firestore.collection('users').doc(decoded.uid).get()
     if (userDoc.exists) {
       socket.data.userRole = userDoc.data().role || null
@@ -281,8 +257,7 @@ io.on('connection', (socket) => {
   console.log(`[+] Socket connected: ${socket.id} (uid: ${socket.data.uid})`)
 
   // ── Join room ──────────────────────────────────────────────────────────
-  socket.on('join-room', ({ roomId, userId, role }) => {
-    // Input validation
+  socket.on('join-room', async ({ roomId, userId, role }) => {
     if (!roomId || typeof roomId !== 'string' || !roomId.trim()) {
       console.warn(`[Signaling] join-room rejected: invalid roomId from ${socket.id}`)
       socket.emit('error', { message: 'Invalid roomId' })
@@ -299,14 +274,12 @@ io.on('connection', (socket) => {
       return
     }
 
-    // Verify the claimed role matches the authenticated user's role
     if (socket.data.userRole && socket.data.userRole !== role) {
       console.warn(`[Signaling] join-room rejected: role mismatch for uid ${socket.data.uid} (claimed: ${role}, actual: ${socket.data.userRole})`)
       socket.emit('error', { message: 'Role mismatch with authenticated user.' })
       return
     }
 
-    // Verify userId matches authenticated uid
     if (userId !== socket.data.uid) {
       console.warn(`[Signaling] join-room rejected: userId mismatch for uid ${socket.data.uid} (claimed: ${userId})`)
       socket.emit('error', { message: 'User ID does not match authenticated user.' })
@@ -314,7 +287,7 @@ io.on('connection', (socket) => {
     }
 
     socket.join(roomId)
-    const resolvedRoomId = resolveRoomId(roomId)
+    const resolvedRoomId = await resolveRoomId(roomId)
     if (resolvedRoomId !== roomId) {
       socket.join(resolvedRoomId)
     }
@@ -324,16 +297,14 @@ io.on('connection', (socket) => {
     socket.data.userId = userId
     socket.data.role = role
 
-    // Track socket in roomSockets
     addSocketToRoom(roomId, socket.id)
     if (resolvedRoomId !== roomId) {
       addSocketToRoom(resolvedRoomId, socket.id)
     }
 
-    const room = getOrCreateRoom(resolvedRoomId)
+    const room = await roomStore.getOrCreateRoom(resolvedRoomId)
 
     if (role === 'candidate') {
-      // Enforce single candidate per room
       if (room.candidateLocked && room.candidate && room.candidate !== socket.id) {
         console.warn(`[Signaling] [room:${resolvedRoomId}] REJECTED duplicate candidate: ${userId}`)
         socket.emit('room-locked', { message: 'This interview room already has an active candidate. Each link supports only one session at a time.' })
@@ -345,14 +316,15 @@ io.on('connection', (socket) => {
       }
       room.candidate = socket.id
       room.candidateLocked = true
-      console.log(`[Signaling] [room:${resolvedRoomId}] Candidate joined: ${userId} (alias: ${roomId})`)
     } else if (role === 'hr') {
       room.hr = socket.id
-      console.log(`[Signaling] [room:${resolvedRoomId}] HR joined (observer): ${userId} (alias: ${roomId})`)
       room.observers.add(socket.id)
     }
 
-    // Notify others in both the original and resolved room
+    await roomStore.setRoom(resolvedRoomId, room)
+
+    console.log(`[Signaling] [room:${resolvedRoomId}] ${role} joined: ${userId} (alias: ${roomId})`)
+
     const peerJoinedPayload = { userId, role, socketId: socket.id }
     socket.to(roomId).emit('peer-joined', peerJoinedPayload)
     if (resolvedRoomId !== roomId) {
@@ -365,31 +337,31 @@ io.on('connection', (socket) => {
   })
 
   // ── Register observer alias ─────────────────────────────────────────────
-  socket.on('register-observer-alias', ({ observerRoomId, sourceRoomId }) => {
+  socket.on('register-observer-alias', async ({ observerRoomId, sourceRoomId }) => {
     if (!observerRoomId || !sourceRoomId || observerRoomId === sourceRoomId) return
 
-    // Verify source room exists before creating alias
-    const sourceRoom = getRoom(sourceRoomId)
+    const sourceRoom = await roomStore.getRoom(sourceRoomId)
     if (!sourceRoom) {
       console.warn(`[Signaling] register-observer-alias rejected: source room ${sourceRoomId} does not exist`)
       socket.emit('error', { message: 'Source room does not exist' })
       return
     }
 
-    observerAliases.set(observerRoomId, sourceRoomId)
+    await roomStore.setAlias(observerRoomId, sourceRoomId)
 
-    // Only set candidate if not already set (prevent overwriting existing candidate)
     if (socket.data.role === 'candidate' && !sourceRoom.candidate) {
       sourceRoom.candidate = socket.id
       sourceRoom.candidateLocked = true
     }
 
-    const aliasRoom = rooms[observerRoomId]
+    const aliasRoom = await roomStore.getRoom(observerRoomId)
     if (aliasRoom) {
       if (aliasRoom.hr && !sourceRoom.hr) sourceRoom.hr = aliasRoom.hr
       aliasRoom.observers.forEach((observerId) => sourceRoom.observers.add(observerId))
-      delete rooms[observerRoomId]
+      await roomStore.deleteRoom(observerRoomId)
     }
+
+    await roomStore.setRoom(sourceRoomId, sourceRoom)
 
     sourceRoom.observers.forEach((observerId) => {
       io.to(observerId).emit('room-state', {
@@ -400,15 +372,15 @@ io.on('connection', (socket) => {
   })
 
   // ── Helper: validate relay event ───────────────────────────────────────
-  function validateRelay(roomId, requiredRole) {
+  async function validateRelay(roomId, requiredRole) {
     if (!roomId) return null
     if (requiredRole && socket.data.role !== requiredRole) {
       console.warn(`[Signaling] Event rejected: role "${socket.data.role}" != required "${requiredRole}" from ${socket.id}`)
       socket.emit('error', { message: `Requires ${requiredRole} role.` })
       return null
     }
-    const resolvedRoomId = resolveRoomId(roomId)
-    const room = getRoom(resolvedRoomId)
+    const resolvedRoomId = await resolveRoomId(roomId)
+    const room = await roomStore.getRoom(resolvedRoomId)
     if (!room) {
       console.warn(`[Signaling] Event rejected: room ${resolvedRoomId} does not exist`)
       return null
@@ -417,12 +389,12 @@ io.on('connection', (socket) => {
   }
 
   // ── Stream request: HR asks candidate to send WebRTC offer ─────────────
-  socket.on('request-stream', ({ roomId }) => {
+  socket.on('request-stream', async ({ roomId }) => {
     if (socket.data.role !== 'hr') {
       console.warn(`[Signaling] request-stream rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
       return
     }
-    const result = validateRelay(roomId)
+    const result = await validateRelay(roomId)
     if (!result) return
     const { resolvedRoomId, room } = result
     if (room.candidate) {
@@ -438,7 +410,6 @@ io.on('connection', (socket) => {
       console.warn(`[Signaling] offer rate limited for ${socket.id}`)
       return
     }
-    // Verify target socket is in the same room
     const senderRoom = socket.data.roomId
     if (!senderRoom || !isSocketInRoom(senderRoom, to)) {
       console.warn(`[Signaling] offer rejected: target ${to} not in same room as ${socket.id}`)
@@ -477,7 +448,7 @@ io.on('connection', (socket) => {
     io.to(to).emit('ice-candidate', { from: socket.id, candidate })
   })
 
-  // ── HR → Candidate WebRTC signaling (two-way audio/video) ──────────────
+  // ── HR -> Candidate WebRTC signaling (two-way audio/video) ──────────────
   socket.on('hr-offer', ({ to, offer }) => {
     if (socket.data.role !== 'hr') {
       console.warn(`[Signaling] hr-offer rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
@@ -488,13 +459,12 @@ io.on('connection', (socket) => {
       console.warn(`[Signaling] hr-offer rate limited for ${socket.id}`)
       return
     }
-    // Verify target is in the same room
     const senderRoom = socket.data.roomId
     if (!senderRoom || !isSocketInRoom(senderRoom, to)) {
       console.warn(`[Signaling] hr-offer rejected: target ${to} not in same room as ${socket.id}`)
       return
     }
-    console.log(`[WebRTC] [room:${senderRoom}] HR offer → candidate ${to}`)
+    console.log(`[WebRTC] [room:${senderRoom}] HR offer -> candidate ${to}`)
     io.to(to).emit('hr-offer', { from: socket.id, offer })
   })
 
@@ -513,7 +483,7 @@ io.on('connection', (socket) => {
       console.warn(`[Signaling] candidate-answer rejected: target ${to} not in same room as ${socket.id}`)
       return
     }
-    console.log(`[WebRTC] [room:${senderRoom}] Candidate answer → HR ${to}`)
+    console.log(`[WebRTC] [room:${senderRoom}] Candidate answer -> HR ${to}`)
     io.to(to).emit('candidate-answer', { from: socket.id, answer })
   })
 
@@ -535,13 +505,13 @@ io.on('connection', (socket) => {
     io.to(to).emit('hr-ice-candidate', { from: socket.id, candidate })
   })
 
-  // ── HR speak request → candidate ──────────────────────────────────────
-  socket.on('hr-speak-request', ({ roomId }) => {
+  // ── HR speak request -> candidate ──────────────────────────────────────
+  socket.on('hr-speak-request', async ({ roomId }) => {
     if (socket.data.role !== 'hr') {
       console.warn(`[Signaling] hr-speak-request rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
       return
     }
-    const result = validateRelay(roomId)
+    const result = await validateRelay(roomId)
     if (!result) return
     const { resolvedRoomId, room } = result
     if (room.candidate) {
@@ -550,55 +520,50 @@ io.on('connection', (socket) => {
     }
   })
 
-  // ── Candidate accepted HR speak → notify all observers, pause AI ─────
-  socket.on('hr-speak-accept', ({ roomId }) => {
+  // ── Candidate accepted HR speak -> notify all observers, pause AI ─────
+  socket.on('hr-speak-accept', async ({ roomId }) => {
     if (socket.data.role !== 'candidate') {
       console.warn(`[Signaling] hr-speak-accept rejected: non-candidate role "${socket.data.role}" from ${socket.id}`)
       return
     }
-    const result = validateRelay(roomId)
+    const result = await validateRelay(roomId)
     if (!result) return
     const { resolvedRoomId, room } = result
     console.log(`[Signaling] [room:${resolvedRoomId}] Candidate accepted HR speak (alias: ${roomId})`)
 
-    // Notify all observers (including HR)
     room.observers.forEach(obsId => {
       io.to(obsId).emit('hr-speak-accepted')
     })
-    // Also confirm to the candidate
     socket.emit('hr-speak-accepted')
 
-    // Broadcast to the resolved room to pause AI
     socket.to(resolvedRoomId).emit('ai-pause')
     if (resolvedRoomId !== roomId) {
       socket.to(roomId).emit('ai-pause')
     }
   })
 
-  // ── HR ended speaking → resume AI ─────────────────────────────────────
-  socket.on('hr-speak-end', ({ roomId }) => {
+  // ── HR ended speaking -> resume AI ─────────────────────────────────────
+  socket.on('hr-speak-end', async ({ roomId }) => {
     if (socket.data.role !== 'hr') {
       console.warn(`[Signaling] hr-speak-end rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
       return
     }
-    const result = validateRelay(roomId)
+    const result = await validateRelay(roomId)
     if (!result) return
     const { resolvedRoomId, room } = result
-    console.log(`[Signaling] [room:${resolvedRoomId}] HR ended speaking — resuming AI (alias: ${roomId})`)
-    // Notify candidate to resume
+    console.log(`[Signaling] [room:${resolvedRoomId}] HR ended speaking -- resuming AI (alias: ${roomId})`)
     if (room.candidate) {
       io.to(room.candidate).emit('hr-speak-end')
     }
-    // Broadcast to resolved room to resume AI
     socket.to(resolvedRoomId).emit('ai-resume')
     if (resolvedRoomId !== roomId) {
       socket.to(roomId).emit('ai-resume')
     }
   })
 
-  // ── Proctoring alert relay (candidate → HR observer) ──────────────────
-  socket.on('proctoring-alert', ({ roomId, warning }) => {
-    const result = validateRelay(roomId, 'candidate')
+  // ── Proctoring alert relay (candidate -> HR observer) ──────────────────
+  socket.on('proctoring-alert', async ({ roomId, warning }) => {
+    const result = await validateRelay(roomId, 'candidate')
     if (!result) return
     const { room } = result
     room.observers.forEach(obsId => {
@@ -606,10 +571,10 @@ io.on('connection', (socket) => {
     })
   })
 
-  // ── Interview state relay (candidate → HR) ────────────────────────────
-  socket.on('interview-state', (data) => {
+  // ── Interview state relay (candidate -> HR) ────────────────────────────
+  socket.on('interview-state', async (data) => {
     if (!data || !data.roomId) return
-    const result = validateRelay(data.roomId, 'candidate')
+    const result = await validateRelay(data.roomId, 'candidate')
     if (!result) return
     const { room } = result
     room.observers.forEach(obsId => {
@@ -617,10 +582,10 @@ io.on('connection', (socket) => {
     })
   })
 
-  // ── Candidate typing relay (candidate → HR) ──────────────────────────
-  socket.on('candidate-typing', (data) => {
+  // ── Candidate typing relay (candidate -> HR) ──────────────────────────
+  socket.on('candidate-typing', async (data) => {
     if (!data || !data.roomId) return
-    const result = validateRelay(data.roomId, 'candidate')
+    const result = await validateRelay(data.roomId, 'candidate')
     if (!result) return
     const { room } = result
     room.observers.forEach(obsId => {
@@ -628,10 +593,10 @@ io.on('connection', (socket) => {
     })
   })
 
-  // ── AI speaking relay (candidate → HR) ────────────────────────────────
-  socket.on('ai-speaking', (data) => {
+  // ── AI speaking relay (candidate -> HR) ────────────────────────────────
+  socket.on('ai-speaking', async (data) => {
     if (!data || !data.roomId) return
-    const result = validateRelay(data.roomId, 'candidate')
+    const result = await validateRelay(data.roomId, 'candidate')
     if (!result) return
     const { room } = result
     room.observers.forEach(obsId => {
@@ -639,10 +604,10 @@ io.on('connection', (socket) => {
     })
   })
 
-  // ── Answer submitted relay (candidate → HR) ──────────────────────────
-  socket.on('answer-submitted', (data) => {
+  // ── Answer submitted relay (candidate -> HR) ──────────────────────────
+  socket.on('answer-submitted', async (data) => {
     if (!data || !data.roomId) return
-    const result = validateRelay(data.roomId, 'candidate')
+    const result = await validateRelay(data.roomId, 'candidate')
     if (!result) return
     const { room } = result
     room.observers.forEach(obsId => {
@@ -650,10 +615,10 @@ io.on('connection', (socket) => {
     })
   })
 
-  // ── Proctoring state relay (candidate → HR) ──────────────────────────
-  socket.on('proctoring-state', (data) => {
+  // ── Proctoring state relay (candidate -> HR) ──────────────────────────
+  socket.on('proctoring-state', async (data) => {
     if (!data || !data.roomId) return
-    const result = validateRelay(data.roomId, 'candidate')
+    const result = await validateRelay(data.roomId, 'candidate')
     if (!result) return
     const { room } = result
     room.observers.forEach(obsId => {
@@ -661,14 +626,14 @@ io.on('connection', (socket) => {
     })
   })
 
-  // ── HR custom question relay (HR observer → candidate) ────────────────
-  socket.on('hr-custom-question', (data) => {
+  // ── HR custom question relay (HR observer -> candidate) ────────────────
+  socket.on('hr-custom-question', async (data) => {
     if (socket.data.role !== 'hr') {
       console.warn(`[Signaling] hr-custom-question rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
       return
     }
     if (!data || !data.roomId) return
-    const result = validateRelay(data.roomId)
+    const result = await validateRelay(data.roomId)
     if (!result) return
     const { resolvedRoomId, room } = result
     if (room.candidate) {
@@ -677,14 +642,14 @@ io.on('connection', (socket) => {
     }
   })
 
-  // ── HR question audio relay (HR observer → candidate) ────────────────
-  socket.on('hr-question-audio', (data) => {
+  // ── HR question audio relay (HR observer -> candidate) ────────────────
+  socket.on('hr-question-audio', async (data) => {
     if (socket.data.role !== 'hr') {
       console.warn(`[Signaling] hr-question-audio rejected: non-HR role "${socket.data.role}" from ${socket.id}`)
       return
     }
     if (!data || !data.roomId) return
-    const result = validateRelay(data.roomId)
+    const result = await validateRelay(data.roomId)
     if (!result) return
     const { resolvedRoomId, room } = result
     if (room.candidate) {
@@ -694,7 +659,7 @@ io.on('connection', (socket) => {
   })
 
   // ── Interview ended ────────────────────────────────────────────────────
-  socket.on('interview-ended', (data) => {
+  socket.on('interview-ended', async (data) => {
     if (socket.data.role !== 'hr' && socket.data.role !== 'candidate') {
       console.warn(`[Signaling] interview-ended rejected: invalid role "${socket.data.role}" from ${socket.id}`)
       return
@@ -704,8 +669,8 @@ io.on('connection', (socket) => {
       console.warn(`[Signaling] interview-ended rejected: invalid roomId from ${socket.id}`)
       return
     }
-    const resolvedRoomId = resolveRoomId(rawRoomId)
-    const room = getRoom(resolvedRoomId)
+    const resolvedRoomId = await resolveRoomId(rawRoomId)
+    const room = await roomStore.getRoom(resolvedRoomId)
     if (!room) {
       console.warn(`[Signaling] interview-ended rejected: room ${resolvedRoomId} does not exist`)
       return
@@ -718,11 +683,11 @@ io.on('connection', (socket) => {
   })
 
   // ── Disconnect ─────────────────────────────────────────────────────────
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     const { roomId, role } = socket.data
     if (!roomId) return
 
-    const room = getRoom(roomId)
+    const room = await roomStore.getRoom(roomId)
     if (!room) return
 
     if (role === 'candidate' && room.candidate === socket.id) {
@@ -734,14 +699,12 @@ io.on('connection', (socket) => {
     }
     room.observers.delete(socket.id)
 
-    // Remove from roomSockets tracking
     const joinedRoomId = socket.data.joinedRoomId
     removeSocketFromRoom(roomId, socket.id)
     if (joinedRoomId && joinedRoomId !== roomId) {
       removeSocketFromRoom(joinedRoomId, socket.id)
     }
 
-    // Notify both resolved room and original joined room
     const peerLeftPayload = { socketId: socket.id, role }
     socket.to(roomId).emit('peer-left', peerLeftPayload)
     if (joinedRoomId && joinedRoomId !== roomId) {
@@ -749,12 +712,17 @@ io.on('connection', (socket) => {
     }
     console.log(`[-] Socket disconnected: ${socket.id} (room: ${roomId}, joined: ${joinedRoomId}, role: ${role})`)
 
-    // Clean up empty rooms
     if (!room.candidate && !room.hr && room.observers.size === 0) {
-      delete rooms[roomId]
+      await roomStore.deleteRoom(roomId)
+      await roomStore.deleteAliasesBySourceRoom(roomId)
       roomSockets.delete(roomId)
-      for (const [aliasRoomId, sourceRoomId] of observerAliases.entries()) {
-        if (sourceRoomId === roomId) observerAliases.delete(aliasRoomId)
+    } else {
+      await roomStore.setRoom(roomId, room)
+    }
+
+    for (const key of socketRateLimits.keys()) {
+      if (key.startsWith(socket.id + ':')) {
+        socketRateLimits.delete(key)
       }
     }
   })

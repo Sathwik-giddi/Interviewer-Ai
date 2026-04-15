@@ -7,6 +7,8 @@
  */
 
 import { getBackendBaseUrl } from './runtimeConfig'
+import { auth } from '../firebase'
+import { getIdToken } from 'firebase/auth'
 
 function splitCsv(value = '') {
   return String(value)
@@ -56,9 +58,17 @@ async function fetchTurnCredentialsFromBackend() {
     throw new Error('Backend URL not configured')
   }
 
+  let authHeaders = { 'Content-Type': 'application/json' }
+  try {
+    if (auth.currentUser) {
+      const token = await getIdToken(auth.currentUser)
+      if (token) authHeaders['Authorization'] = `Bearer ${token}`
+    }
+  } catch {}
+
   const response = await fetch(`${backendUrl}/api/turn-credentials`, {
     method: 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders,
   })
 
   if (!response.ok) {

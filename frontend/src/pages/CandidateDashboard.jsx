@@ -31,8 +31,8 @@ export default function CandidateDashboard() {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       data.sort((a, b) => {
         const da = a.startedAt?.toDate ? a.startedAt.toDate() : new Date(a.startedAt || 0)
-        const db = b.startedAt?.toDate ? b.startedAt.toDate() : new Date(b.startedAt || 0)
-        return db - da
+        const dbVal = b.startedAt?.toDate ? b.startedAt.toDate() : new Date(b.startedAt || 0)
+        return dbVal - da
       })
       setSessions(data)
     } catch (e) {

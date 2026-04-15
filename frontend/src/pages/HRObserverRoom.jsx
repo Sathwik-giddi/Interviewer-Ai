@@ -14,7 +14,7 @@ import { useToast } from '../components/Toast'
 import { io } from 'socket.io-client'
 import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
 import { getSocketAuth } from '../lib/socketAuth'
-import { buildRtcConfig, getTurnIceServers } from '../utils/turnUtils'
+import { buildRtcConfigAsync } from '../lib/webrtcConfig'
 import { getSelectedCandidatePairInfo } from '../lib/webrtcConfig'
 
 const SIGNAL  = getSocketServerUrl()
@@ -360,7 +360,7 @@ export default function HRObserverRoom() {
   async function createPC(remotePeerId) {
     peerRef.current?.close()
     remotePeerIdRef.current = remotePeerId
-    const config = await buildRtcConfig()
+    const config = await buildRtcConfigAsync()
     const pc = new RTCPeerConnection(config)
     peerRef.current = pc
     pc.onicecandidate = ({ candidate }) => { if (candidate) socketRef.current?.emit('ice-candidate', { to: remotePeerId, candidate }) }
@@ -420,7 +420,7 @@ export default function HRObserverRoom() {
       hrSpeakPcRef.current?.close()
 
       // Create a new dedicated peer connection for HR → candidate audio/video
-      const config = await buildRtcConfig()
+      const config = await buildRtcConfigAsync()
       const pc = new RTCPeerConnection(config)
       hrSpeakPcRef.current = pc
       hrSpeakRemotePeerIdRef.current = candidateSocketId

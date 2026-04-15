@@ -9,7 +9,7 @@ import ProctoringAlert from '../components/ProctoringAlert'
 import { useToast } from '../components/Toast'
 import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
 import { getSocketAuth } from '../lib/socketAuth'
-import { buildRtcConfig, getTurnIceServers } from '../utils/turnUtils'
+import { buildRtcConfigAsync } from '../lib/webrtcConfig'
 import { getSelectedCandidatePairInfo, hasTurnConfig } from '../lib/webrtcConfig'
 
 const BACKEND = getBackendBaseUrl()
@@ -115,6 +115,32 @@ export default function InterviewRoom() {
   useEffect(() => { phaseRef.current = phase }, [phase])
   useEffect(() => { qIndexRef.current = qIndex }, [qIndex])
   useEffect(() => { questionDurationsRef.current = questionDurations }, [questionDurations])
+  const candidateNameRef = useRef('')
+  const candidateEmailRef = useRef('')
+  const candidatePhoneRef = useRef('')
+  const candidateCustomIdRef = useRef('')
+  const jobTitleRef = useRef('')
+  const jobDescriptionRef = useRef('')
+  const matchScoreRef = useRef(null)
+  const parsedResumeRef = useRef(null)
+  const evaluationRef = useRef(null)
+  const procHistoryRef = useRef([])
+  const observerRoomIdRef = useRef(roomId)
+  const campaignIdRef = useRef('')
+  const linkIdRef = useRef('')
+  useEffect(() => { candidateNameRef.current = candidateName }, [candidateName])
+  useEffect(() => { candidateEmailRef.current = candidateEmail }, [candidateEmail])
+  useEffect(() => { candidatePhoneRef.current = candidatePhone }, [candidatePhone])
+  useEffect(() => { candidateCustomIdRef.current = candidateCustomId }, [candidateCustomId])
+  useEffect(() => { jobTitleRef.current = jobTitle }, [jobTitle])
+  useEffect(() => { jobDescriptionRef.current = jobDescription }, [jobDescription])
+  useEffect(() => { matchScoreRef.current = matchScore }, [matchScore])
+  useEffect(() => { parsedResumeRef.current = parsedResume }, [parsedResume])
+  useEffect(() => { evaluationRef.current = evaluation }, [evaluation])
+  useEffect(() => { procHistoryRef.current = procHistory }, [procHistory])
+  useEffect(() => { observerRoomIdRef.current = observerRoomId }, [observerRoomId])
+  useEffect(() => { campaignIdRef.current = campaignId }, [campaignId])
+  useEffect(() => { linkIdRef.current = linkId }, [linkId])
 
   // HR Intervention
   const [hrSpeakRequest, setHrSpeakRequest] = useState(false)
@@ -143,6 +169,8 @@ export default function InterviewRoom() {
   const socketRef        = useRef(null)
   const peerRef          = useRef(null)
   const timerRef         = useRef(null)
+  const timerValueRef    = useRef(0)
+  const mainPendingCandidatesRef = useRef([])
   const remotePeerIdRef  = useRef(null)
   const relayFallbackAttemptedRef = useRef(false)
   const activeRelayModeRef = useRef(false)
@@ -150,6 +178,7 @@ export default function InterviewRoom() {
   // HR two-way audio/video peer connection (separate from the main candidate→HR stream)
   const hrSpeakPcRef = useRef(null)
   const hrSpeakPendingCandidatesRef = useRef([])
+  const hrSpeakRemoteSocketIdRef = useRef(null)
   const hrVideoRef = useRef(null)
 
   function getCurrentPageUrl() {
@@ -196,29 +225,29 @@ export default function InterviewRoom() {
       session_id: sessionIdRef.current || sessionId,
       candidate_id: candidateIdRef.current || candidateId || userId,
       room_id: roomId,
-      campaign_id: campaignId,
-      link_id: linkId,
-      observer_room_id: observerRoomId,
+      campaign_id: campaignIdRef.current,
+      link_id: linkIdRef.current,
+      observer_room_id: observerRoomIdRef.current,
       status: statusOverride || (phaseRef.current === 'ended' ? 'completed' : phaseRef.current === 'interview' ? 'in-progress' : 'draft'),
       fields: {
-        candidateName: candidateName.trim(),
-        candidateEmail: candidateEmail.trim(),
-        candidatePhone: candidatePhone.trim(),
-        candidateCustomId: candidateCustomId.trim(),
-        jobTitle: jobTitle.trim(),
-        jobDescription: jobDescription.trim(),
+        candidateName: candidateNameRef.current.trim(),
+        candidateEmail: candidateEmailRef.current.trim(),
+        candidatePhone: candidatePhoneRef.current.trim(),
+        candidateCustomId: candidateCustomIdRef.current.trim(),
+        jobTitle: jobTitleRef.current.trim(),
+        jobDescription: jobDescriptionRef.current.trim(),
       },
       questions,
       answers,
       current_index: qIndex,
-      match_score: matchScore,
-      parsed_resume: parsedResume,
+      match_score: matchScoreRef.current,
+      parsed_resume: parsedResumeRef.current,
       question_durations: questionDurationsRef.current,
       pages_visited: pagesVisited,
-      duration: timer,
-      violations: procHistory.map(h => ({ type: h.type, timestamp: h.ts, details: h.msg })),
+      duration: timerValueRef.current,
+      violations: procHistoryRef.current.map(h => ({ type: h.type, timestamp: h.ts, details: h.msg })),
       started_at: sessionStartedAt || new Date().toISOString(),
-      evaluation,
+      evaluation: evaluationRef.current,
     }
   }
 
@@ -440,20 +469,10 @@ export default function InterviewRoom() {
     scheduleProgressPersist()
   }, [
     prefillChecked,
-    candidateName,
-    candidateEmail,
-    candidatePhone,
-    candidateCustomId,
-    jobTitle,
-    jobDescription,
     qIndex,
     answers,
-    questions,
-    matchScore,
-    parsedResume,
     phase,
-    questionDurations,
-    pagesVisited,
+    questions,
   ])
 
   useEffect(() => {
@@ -467,6 +486,30 @@ export default function InterviewRoom() {
     }, 15000)
     return () => clearInterval(interval)
   }, [phase, roomId])
+
+  useEffect(() => {
+    if (phase !== 'interview') return
+    function handleVisibility() {
+      if (document.hidden) {
+        setTabSwitchCount(prev => {
+          const next = prev + 1
+          enqueueAction({
+            action_type: 'proctoring',
+            field_name: 'tab_switch',
+            message: `Tab switch detected (#${next}) at ${new Date().toLocaleTimeString()}`,
+          })
+          socketRef.current?.emit('proctoring-alert', { roomId, warning: `Tab switch detected (#${next})` })
+          if (next >= 5) {
+            setInterviewDisqualified(true)
+            toast.error('Interview disqualified: too many tab switches.')
+          }
+          return next
+        })
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [phase])
 
   async function startCamera() {
     try {
@@ -516,16 +559,30 @@ export default function InterviewRoom() {
       socket.on('offer', async ({ from, offer }) => {
         const pc = await createPC(from)
         await pc.setRemoteDescription(new RTCSessionDescription(offer))
+        for (const c of mainPendingCandidatesRef.current) {
+          await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
+        }
+        mainPendingCandidatesRef.current = []
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
         socket.emit('answer', { to: from, answer })
       })
-      socket.on('answer', async ({ answer }) => {
-        if (peerRef.current?.signalingState === 'have-local-offer')
+      socket.on('answer', async ({ from, answer }) => {
+        if (from === hrSpeakRemoteSocketIdRef.current && hrSpeakPcRef.current?.signalingState === 'have-local-offer') {
+          await hrSpeakPcRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+        } else if (peerRef.current?.signalingState === 'have-local-offer') {
           await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+        }
       })
-      socket.on('ice-candidate', ({ candidate }) => {
-        peerRef.current?.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
+      socket.on('ice-candidate', ({ from, candidate }) => {
+        if (!candidate) return
+        if (from === hrSpeakRemoteSocketIdRef.current && hrSpeakPcRef.current?.remoteDescription) {
+          hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
+        } else if (peerRef.current?.remoteDescription) {
+          peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
+        } else {
+          mainPendingCandidatesRef.current.push(candidate)
+        }
       })
 
       // Room locked — another candidate is already using this link
@@ -538,6 +595,7 @@ export default function InterviewRoom() {
       socket.on('hr-speak-request', () => { setHrSpeakRequest(true); stopSpeaking() })
       socket.on('hr-speak-end', () => {
         setHrSpeaking(false); setHrSpeakRequest(false); setHrCustomQuestion(null)
+        hrSpeakRemoteSocketIdRef.current = null
         // Close the HR speak peer connection and clean up
         hrSpeakPcRef.current?.close()
         hrSpeakPcRef.current = null
@@ -550,12 +608,13 @@ export default function InterviewRoom() {
       // HR sends a WebRTC offer when they start speaking (after candidate accepts)
       socket.on('hr-offer', async ({ from, offer }) => {
         console.log('[WebRTC] Received HR offer for two-way media')
+        hrSpeakRemoteSocketIdRef.current = from
         try {
           // Close any previous HR speak peer connection
           hrSpeakPcRef.current?.close()
           hrSpeakPendingCandidatesRef.current = []
 
-          const config = await buildRtcConfig()
+          const config = await buildRtcConfigAsync()
           const pc = new RTCPeerConnection(config)
           hrSpeakPcRef.current = pc
 
@@ -691,7 +750,7 @@ export default function InterviewRoom() {
     peerRef.current?.close()
     remotePeerIdRef.current = remotePeerId
     activeRelayModeRef.current = forceRelay
-    const config = await buildRtcConfig({ forceRelay })
+    const config = await buildRtcConfigAsync({ forceRelay })
     const pc = new RTCPeerConnection(config)
     peerRef.current = pc
     const stream = localStreamRef.current
@@ -936,7 +995,7 @@ export default function InterviewRoom() {
       } catch { /* coco-ssd not ready */ }
     }
 
-    setProcWarnings(warnings)
+    setProcWarnings(warnings.slice(0, 10))
     if (warnings.length > 0) {
       const ts = new Date().toLocaleTimeString()
       setProcHistory(prev => [...warnings.map(w => ({ ...w, ts })), ...prev].slice(0, 50))
@@ -970,7 +1029,7 @@ export default function InterviewRoom() {
 
   /* ═══════════════════ TIMER ═══════════════════ */
   useEffect(() => {
-    if (phase === 'interview') timerRef.current = setInterval(() => setTimer(t => t + 1), 1000)
+    if (phase === 'interview') timerRef.current = setInterval(() => setTimer(t => { const next = t + 1; timerValueRef.current = next; return next }), 1000)
     return () => clearInterval(timerRef.current)
   }, [phase])
 
@@ -1279,7 +1338,7 @@ export default function InterviewRoom() {
       message: `Completed assessment at ${new Date().toLocaleTimeString()}`,
       metadata: {
         answersCount: finalAnswers.length,
-        durationSeconds: timer,
+        durationSeconds: timerValueRef.current,
       },
     })
 
@@ -1299,7 +1358,7 @@ export default function InterviewRoom() {
           started_at: sessionStartedAt,
           answers: finalAnswers,
           violations: procHistory.map(h => ({ type: h.type, timestamp: h.ts, details: h.msg })),
-          duration: timer,
+          duration: timerValueRef.current,
           candidateName,
           jobTitle,
           jobDescription,

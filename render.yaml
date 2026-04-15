@@ -29,7 +29,21 @@ services:
         value: BSEyIggm5WJlQi4O
       - key: TURN_DOMAIN
         value: sathwik-interviewer.metered.ca
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: ai-interviewer-redis
+          property: connectionString
     healthCheckPath: /health
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Redis (In-memory data store for room state persistence)
+  # ─────────────────────────────────────────────────────────────────────
+  - type: redis
+    name: ai-interviewer-redis
+    plan: free
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru
 
   # ─────────────────────────────────────────────────────────────────────
   # Flask Backend (Python + Gemini AI + Firebase)

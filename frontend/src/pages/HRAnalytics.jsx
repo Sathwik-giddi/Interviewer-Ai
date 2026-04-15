@@ -27,7 +27,7 @@ export default function HRAnalytics() {
     try {
       // Load sessions
       const sessSnap = await Promise.race([
-        getDocs(query(collection(db, 'sessions'))),
+        getDocs(query(collection(db, 'sessions'), where('hrId', '==', currentUser.uid))),
         new Promise((_, r) => setTimeout(() => r(), 5000)),
       ])
       const sessData = sessSnap?.docs?.map(d => ({ id: d.id, ...d.data() })) || []

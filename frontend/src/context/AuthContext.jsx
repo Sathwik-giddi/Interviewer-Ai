@@ -11,11 +11,6 @@ import { getCurrentRoutePath } from '../lib/runtimeConfig'
 
 const AuthContext = createContext(null)
 
-// ── Hardcoded HR credentials ──
-const HR_EMAIL = 'hr@gmail.com'
-const HR_PASS  = 'hr@gmail.com'
-const MOCK_HR  = { uid: 'hr-admin-001', email: HR_EMAIL, displayName: 'HR Admin' }
-const STORAGE_KEY = '__ai_interviewer_mock_hr__'
 const ROLE_CACHE_KEY = '__ai_interviewer_roles__'
 
 function readRoleCache() {
@@ -42,14 +37,9 @@ function getCachedUserRole(uid) {
 }
 
 export function AuthProvider({ children }) {
-  // Check localStorage for persisted mock HR session
-  const savedMock = (() => {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) } catch { return null }
-  })()
-
-  const [currentUser, setCurrentUser] = useState(savedMock)
-  const [userRole, setUserRole] = useState(savedMock ? 'hr' : null)
-  const [loading, setLoading] = useState(!savedMock) // skip loading if mock HR restored
+  const [currentUser, setCurrentUser] = useState(null)
+  const [userRole, setUserRole] = useState(null)
+  const [loading, setLoading] = useState(true)
 
   async function signup(email, password, role) {
     const cred = await createUserWithEmailAndPassword(auth, email, password)
@@ -61,7 +51,6 @@ export function AuthProvider({ children }) {
         createdAt: new Date().toISOString(),
       })
     } catch (error) {
-      // Keep signup usable if Auth succeeds but Firestore is temporarily blocked.
       console.warn('Signup profile write failed; falling back to cached role.', error)
     }
     setCurrentUser(cred.user)
@@ -70,14 +59,6 @@ export function AuthProvider({ children }) {
   }
 
   async function login(email, password) {
-    // Hardcoded HR bypass — no Firebase needed, persists in localStorage
-    if (email.toLowerCase() === HR_EMAIL && password === HR_PASS) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(MOCK_HR))
-      setCurrentUser(MOCK_HR)
-      setUserRole('hr')
-      return { cred: { user: MOCK_HR }, role: 'hr' }
-    }
-
     const cred = await signInWithEmailAndPassword(auth, email, password)
     let role = getCachedUserRole(cred.user.uid) || 'candidate'
     try {
@@ -94,7 +75,6 @@ export function AuthProvider({ children }) {
   }
 
   function logout() {
-    localStorage.removeItem(STORAGE_KEY)
     setCurrentUser(null)
     setUserRole(null)
     if (auth.currentUser) return signOut(auth)
@@ -102,9 +82,6 @@ export function AuthProvider({ children }) {
   }
 
   useEffect(() => {
-    // If mock HR is already restored, don't wait for Firebase
-    if (savedMock) return
-
     const timer = setTimeout(() => setLoading(false), 4000)
 
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -140,10 +117,7 @@ export function AuthProvider({ children }) {
           }
         }
       } else {
-        // Don't overwrite mock HR session
-        if (!localStorage.getItem(STORAGE_KEY)) {
-          setUserRole(null)
-        }
+        setUserRole(null)
       }
       setLoading(false)
     })

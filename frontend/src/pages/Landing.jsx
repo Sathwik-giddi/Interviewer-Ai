@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   MessageCircle,
@@ -16,9 +16,11 @@ import {
   BarChart3,
 } from 'lucide-react'
 import PricingSection from '../components/PricingSection'
+import '../styles/landing.css'
 
 function AnimatedNumber({ target, suffix = '' }) {
   const [count, setCount] = useState(0)
+
   useEffect(() => {
     let start = 0
     const duration = 2000
@@ -31,249 +33,722 @@ function AnimatedNumber({ target, suffix = '' }) {
       }
       setCount(start)
     }, 16)
+
     return () => clearInterval(timer)
   }, [target])
+
   return (
     <>{count.toLocaleString()}{suffix}</>
   )
 }
 
+function SectionHeading({ eyebrow, title, description, align = 'center' }) {
+  return (
+    <div
+      className={`landing-section-heading${
+        align === 'left' ? ' landing-section-heading--left' : ''
+      }`}
+    >
+      <span className="landing-eyebrow-text">{eyebrow}</span>
+      <h2>{title}</h2>
+      <p>{description}</p>
+    </div>
+  )
+}
+
+const partnerMarks = [
+  'Northstar Talent',
+  'Astra Health',
+  'BluePeak Systems',
+  'Meridian Ops',
+  'ScaleForge',
+  'Campus Loop',
+]
+
+const heroSignals = [
+  {
+    title: 'Conversation-first interviewing',
+    description:
+      'Adaptive prompts, real follow-up questions, and a calmer candidate experience.',
+  },
+  {
+    title: 'Integrity built into the room',
+    description:
+      'Video presence, tab events, and session alerts stay visible without extra installs.',
+  },
+  {
+    title: 'Human takeover when it matters',
+    description:
+      'HR can step into the session live instead of losing a strong candidate to the flow.',
+  },
+]
+
+const stats = [
+  {
+    num: 1500,
+    suffix: '+',
+    label: 'interviews orchestrated',
+    detail:
+      'Across live hiring, candidate practice, and structured screening workflows.',
+  },
+  {
+    num: 98,
+    suffix: '%',
+    label: 'candidate satisfaction',
+    detail:
+      'Driven by conversational pacing, clearer prompts, and a less robotic experience.',
+  },
+  {
+    num: 40,
+    suffix: '+',
+    label: 'teams already onboard',
+    detail:
+      'Used by recruiting teams, staffing partners, and candidate preparation programs.',
+  },
+]
+
+const pillars = [
+  {
+    icon: MessageCircle,
+    title: 'Candidates feel guided, not processed',
+    description:
+      'The interview behaves like a real conversation, so strong candidates can show depth instead of guessing how to game a static form.',
+  },
+  {
+    icon: Shield,
+    title: 'Recruiters get evidence instead of instincts',
+    description:
+      'Each session carries transcript highlights, integrity context, technical outputs, and a scorecard teams can actually act on.',
+  },
+  {
+    icon: BarChart3,
+    title: 'Hiring leaders get a cleaner operating layer',
+    description:
+      'One product handles intake, interviewing, intervention, and reporting without forcing teams into fragmented tools.',
+  },
+]
+
+const workflow = [
+  {
+    step: '01',
+    icon: FileText,
+    title: 'Load role context',
+    description:
+      'Start with a job description, resume, and evaluation criteria so the interview is grounded before the session opens.',
+  },
+  {
+    step: '02',
+    icon: MessageCircle,
+    title: 'Run a live AI conversation',
+    description:
+      'The interviewer adapts its follow-ups in real time, pushing deeper when a candidate shows confidence or clarity.',
+  },
+  {
+    step: '03',
+    icon: Video,
+    title: 'Protect integrity without killing flow',
+    description:
+      'Keep browser-based proctoring, presence checks, and recruiter takeover available while the candidate stays in one room.',
+  },
+  {
+    step: '04',
+    icon: BarChart3,
+    title: 'Ship scorecards immediately',
+    description:
+      'Export ATS insights, transcript summaries, and decision-ready reports as soon as the interview ends.',
+  },
+]
+
 const features = [
-  { icon: MessageCircle, title: 'Two-Way AI Interview', desc: 'Our AI asks natural follow-up questions, creating a conversation — not a quiz.' },
-  { icon: Video, title: 'Live Proctoring', desc: 'Face tracking, tab-switch detection, and object alerts keep interviews fair and secure.' },
-  { icon: Globe, title: 'Multilingual Avatar', desc: 'Live AI interviewer with male/female voice options in English, Hindi, and Telugu.' },
-  { icon: Code, title: 'Built-In Code Editor', desc: 'Candidates write and run code live. AI evaluates logic, syntax, and edge cases.' },
-  { icon: Users, title: 'Live HR Intervention', desc: 'HR can speak directly to candidates mid-interview via real-time audio bridge.' },
-  { icon: FileText, title: 'ATS Resume Parser', desc: 'Upload a resume, get an instant ATS score with skill matching and feedback.' },
+  {
+    icon: MessageCircle,
+    title: 'Two-way AI interviews',
+    description:
+      'Move beyond one-way recordings. Canvue asks layered follow-up questions to test clarity, judgment, and real understanding.',
+    points: ['Dynamic follow-ups', 'Natural pacing', 'Role-aware depth'],
+  },
+  {
+    icon: Shield,
+    title: 'Live proctoring',
+    description:
+      'Track face presence, tab switching, and suspicious events in the browser, then keep the full trail attached to the report.',
+    points: ['Face tracking', 'Tab event alerts', 'Integrity summary'],
+  },
+  {
+    icon: Globe,
+    title: 'Multilingual avatars',
+    description:
+      'Give candidates a more inclusive interview room with voice-led interactions in English, Hindi, and Telugu.',
+    points: ['Voice-led flow', 'Multiple languages', 'Calmer candidate UX'],
+  },
+  {
+    icon: Code,
+    title: 'Technical assessment inside the interview',
+    description:
+      'Candidates can write and run code without leaving the session while evaluators still receive a structured summary.',
+    points: ['Built-in editor', 'Execution-ready', 'Logic and syntax review'],
+  },
+  {
+    icon: Users,
+    title: 'Live HR intervention',
+    description:
+      'When a session needs nuance, context, or rescue, recruiters can jump in with real-time audio instead of restarting the process.',
+    points: ['Instant takeover', 'Higher save rate', 'Human where needed'],
+  },
+  {
+    icon: FileText,
+    title: 'ATS and interview intelligence',
+    description:
+      'Score resumes, align skills to roles, and carry that intelligence into the interview so the entire pipeline stays connected.',
+    points: ['Resume parsing', 'Match scoring', 'Exportable reports'],
+  },
+]
+
+const audiences = [
+  {
+    title: 'Hiring teams',
+    description:
+      'Standardize first-round screens without reducing candidates to rigid scripts or clumsy forms.',
+  },
+  {
+    title: 'Candidate prep programs',
+    description:
+      'Offer polished mock interviews and sharper feedback for students, job seekers, and internal training cohorts.',
+  },
+  {
+    title: 'Staffing and staffing-adjacent teams',
+    description:
+      'Pre-qualify volume quickly and still send clients richer evidence than notes from a rushed screening call.',
+  },
 ]
 
 const testimonials = [
   {
-    quote: "Canvue's AI actually asked follow-up questions. It felt like a real conversation — not a scripted quiz.",
+    quote:
+      "Canvue changed the tone of our screening process. Candidates stopped treating the first round like a machine and started engaging like it was a real interview.",
     name: 'Sarah Chen',
-    role: 'HR Director, TechCorp',
+    role: 'HR Director, Northstar Talent',
     initials: 'SC',
-    color: 'bg-blue-600',
   },
   {
-    quote: 'The live HR intervention saved us from losing a great candidate. Game-changing feature for our hiring pipeline.',
+    quote:
+      'The live HR intervention feature has saved multiple high-intent candidates for us. That single capability makes the platform feel designed by people who understand hiring.',
     name: 'Michael Torres',
-    role: 'CTO, ScaleUp Inc.',
+    role: 'Head of Talent Ops, BluePeak Systems',
     initials: 'MT',
-    color: 'bg-violet-600',
   },
   {
-    quote: 'I practiced 50+ mock interviews before my real one. The AI feedback was incredibly specific and helpful.',
+    quote:
+      'I used it for mock interviews before my onsite rounds. The follow-up questions were much more realistic than the usual practice tools and the feedback was specific.',
     name: 'Priya Sharma',
     role: 'Software Engineer',
     initials: 'PS',
-    color: 'bg-amber-500',
   },
 ]
 
 const faqs = [
   {
-    q: 'What is Canvue?',
-    a: 'Canvue is an AI-powered interview platform that conducts two-way conversational interviews with candidates, complete with live proctoring, multilingual avatars, code editor, and instant ATS scoring.',
+    q: 'How quickly can a team get started?',
+    a: 'Most teams can launch the same day. You can create campaigns, upload role context, and start running interviews without additional downloads or desktop software.',
   },
   {
-    q: 'How does proctoring work?',
-    a: 'Canvue uses AI-powered face tracking, tab-switch detection, and object recognition to ensure interview integrity — all in the browser, no downloads required.',
+    q: 'Can recruiters really step into a live interview?',
+    a: 'Yes. Canvue supports live HR intervention through an in-session audio bridge, so your team can take over when a candidate needs clarification or when a strong conversation deserves a human handoff.',
   },
   {
-    q: 'Can I switch plans anytime?',
-    a: 'Yes. You can upgrade or downgrade your plan at any time. Changes take effect at the start of your next billing cycle. No long-term contracts.',
+    q: 'Does it support technical or coding interviews?',
+    a: 'Yes. The platform includes a built-in code editor and lets teams combine conversational questioning with live coding tasks and structured evaluation.',
   },
   {
-    q: 'Is there a free trial?',
-    a: 'Absolutely. Candidates get a free plan with 30 mock tests/month. Organizations get a 14-day free trial — no credit card required.',
+    q: 'Do candidates need to install anything?',
+    a: 'No. Interviews run in the browser with built-in proctoring and media checks, which keeps onboarding friction low for both candidates and recruiters.',
   },
-]
-
-const stats = [
-  { num: 1500, suffix: '+', label: 'Interviews Completed' },
-  { num: 98, suffix: '%', label: 'Candidate Satisfaction' },
-  { num: 40, suffix: '+', label: 'Companies Trust Canvue' },
+  {
+    q: 'Can candidates use Canvue for practice too?',
+    a: 'Yes. The candidate plans are designed for mock interviews, interview prep, and ATS-focused resume feedback before a real hiring process begins.',
+  },
 ]
 
 export default function Landing() {
-  const [openFaq, setOpenFaq] = useState(null)
+  const [openFaq, setOpenFaq] = useState(0)
+
+  useEffect(() => {
+    const elements = document.querySelectorAll('.landing-reveal')
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible')
+            observer.unobserve(entry.target)
+          }
+        })
+      },
+      { threshold: 0.12, rootMargin: '0px 0px -40px 0px' },
+    )
+
+    elements.forEach((element) => observer.observe(element))
+    return () => observer.disconnect()
+  }, [])
 
   return (
-    <div className="min-h-screen bg-white">
-      {/* HERO */}
-      <section className="relative overflow-hidden pt-24 pb-20 md:pt-32 md:pb-28">
-        <div className="absolute inset-0 bg-gradient-to-b from-slate-50 to-white" />
-        <div
-          className="absolute inset-0 opacity-[0.03]"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle at 1px 1px, #3b82f6 1px, transparent 0)',
-            backgroundSize: '40px 40px',
-          }}
-        />
-        <div className="container relative mx-auto px-4 sm:px-6">
-          <div className="mx-auto max-w-4xl text-center">
-            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-4 py-1.5 text-sm font-semibold text-blue-700">
-              <Sparkles className="h-4 w-4" />
-              Now with live HR intervention
+    <div className="landing-premium">
+      <section className="landing-premium__hero">
+        <div className="landing-premium__mesh" />
+        <div className="landing-premium__glow landing-premium__glow--left" />
+        <div className="landing-premium__glow landing-premium__glow--right" />
+        <div className="landing-premium__beam landing-premium__beam--one" />
+        <div className="landing-premium__beam landing-premium__beam--two" />
+        <div className="container">
+          <div className="landing-hero-grid">
+            <div className="landing-hero-copy landing-reveal is-visible">
+              <div className="landing-eyebrow landing-eyebrow--animated">
+                <Sparkles className="h-4 w-4" />
+                Live AI interviews with human control
+              </div>
+              <h1 className="landing-hero-title">
+                The interview platform that feels premium to candidates and
+                precise to hiring teams.
+              </h1>
+              <p className="landing-hero-text">
+                Canvue combines conversational AI, live proctoring,
+                multilingual avatars, recruiter takeover, and ATS intelligence
+                in one polished interview room.
+              </p>
+              <div className="landing-hero-actions">
+                <Link to="/signup" className="landing-btn landing-btn--primary">
+                  Start free trial
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+                <a
+                  href="mailto:sales@canvue.ai"
+                  className="landing-btn landing-btn--secondary"
+                >
+                  Book a team demo
+                </a>
+              </div>
+              <p className="landing-hero-caption">
+                No credit card required. Free candidate plan available.
+              </p>
+
+              <div className="landing-hero-signal-grid">
+                {heroSignals.map((signal, index) => (
+                  <article
+                    key={signal.title}
+                    className="landing-signal-card landing-reveal is-visible"
+                    style={{ '--delay': `${0.14 + index * 0.08}s` }}
+                  >
+                    <h3>{signal.title}</h3>
+                    <p>{signal.description}</p>
+                  </article>
+                ))}
+              </div>
             </div>
-            <h1
-              className="mb-6 text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl md:text-6xl"
-              style={{ fontFamily: 'var(--font-head)' }}
-            >
-              Interview smarter
-              <br />
-              with{' '}
-              <span className="bg-gradient-to-r from-blue-600 to-violet-600 bg-clip-text text-transparent">
-                Canvue AI
-              </span>
-            </h1>
-            <p className="mx-auto mb-10 max-w-2xl text-lg text-slate-500 md:text-xl">
-              Two-way AI interviews, live proctoring, multilingual avatars, and
-              instant ATS scoring — all in one platform.
-            </p>
-            <div className="flex flex-wrap items-center justify-center gap-4">
-              <Link
-                to="/signup"
-                className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-600/25 transition hover:bg-blue-700 hover:shadow-xl hover:shadow-blue-600/30"
-              >
-                Start Free Trial
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-              <Link
-                to="/signup"
-                className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-7 py-3.5 text-sm font-semibold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
-              >
-                Practice for Free
-              </Link>
+
+            <div className="landing-console landing-reveal is-visible" style={{ '--delay': '0.18s' }}>
+              <div className="landing-console__float landing-console__float--left">
+                <span>Candidate calm score</span>
+                <strong>+32%</strong>
+              </div>
+              <div className="landing-console__float landing-console__float--right">
+                <span>Recruiter control</span>
+                <strong>Live handoff</strong>
+              </div>
+              <div className="landing-console__frame landing-console__frame--animated">
+                <div className="landing-console__topbar">
+                  <div className="landing-console__traffic">
+                    <span />
+                    <span />
+                    <span />
+                  </div>
+                  <div className="landing-console__session">
+                    Live interview room
+                  </div>
+                  <div className="landing-console__live">
+                    <span className="landing-console__live-dot" />
+                    HR ready
+                  </div>
+                </div>
+
+                <div className="landing-console__body">
+                  <div className="landing-console__candidate">
+                    <div>
+                      <p className="landing-console__label">Candidate</p>
+                      <h3>Priya Sharma</h3>
+                      <p className="landing-console__meta">
+                        Backend Engineer candidate · Match score 92%
+                      </p>
+                    </div>
+                    <div className="landing-console__badge">
+                      Strong signal
+                    </div>
+                  </div>
+
+                  <div className="landing-console__layout">
+                    <div className="landing-console__panel landing-console__panel--feature">
+                      <p className="landing-console__label">AI interviewer</p>
+                      <h4>Follow-up depth increased after a strong API answer</h4>
+                      <p className="landing-console__copy">
+                        The interviewer is pushing into system design tradeoffs,
+                        scaling concerns, and failure handling instead of moving
+                        to the next scripted question.
+                      </p>
+                      <div className="landing-console__transcript">
+                        <span>AI</span>
+                        Walk me through how you would prevent abuse on a public
+                        rate-limited endpoint while keeping latency low.
+                      </div>
+                      <div className="landing-console__chips">
+                        <span>Adaptive follow-up</span>
+                        <span>Technical depth</span>
+                        <span>Voice-led flow</span>
+                      </div>
+                    </div>
+
+                    <div className="landing-console__stack">
+                      <div className="landing-console__panel">
+                        <p className="landing-console__label">Integrity status</p>
+                        <div className="landing-console__metric-row">
+                          <div>
+                            <strong>99%</strong>
+                            <span>Presence confidence</span>
+                          </div>
+                          <div>
+                            <strong>1</strong>
+                            <span>Tab change</span>
+                          </div>
+                          <div>
+                            <strong>0</strong>
+                            <span>Object alerts</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="landing-console__panel">
+                        <p className="landing-console__label">
+                          Scorecard snapshot
+                        </p>
+                        <div className="landing-console__score">
+                          <div className="landing-console__score-row">
+                            <span>Communication</span>
+                            <div className="landing-console__bar">
+                              <i style={{ width: '91%' }} />
+                            </div>
+                          </div>
+                          <div className="landing-console__score-row">
+                            <span>System design</span>
+                            <div className="landing-console__bar">
+                              <i style={{ width: '88%' }} />
+                            </div>
+                          </div>
+                          <div className="landing-console__score-row">
+                            <span>Problem solving</span>
+                            <div className="landing-console__bar">
+                              <i style={{ width: '94%' }} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="landing-console__panel">
+                        <p className="landing-console__label">
+                          Recruiter actions
+                        </p>
+                        <ul className="landing-console__actions">
+                          <li>Join live audio</li>
+                          <li>Tag candidate for fast-track review</li>
+                          <li>Export ATS-ready summary</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <p className="mt-4 text-sm text-slate-400">
-              No credit card required &middot; Free candidate plan
-            </p>
           </div>
 
-          {/* Abstract illustration placeholder */}
-          <div className="mx-auto mt-16 max-w-3xl">
-            <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-blue-50 via-white to-violet-50 p-8 shadow-lg">
-              <div className="flex items-center justify-center gap-6 py-8">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-blue-100 text-blue-600">
-                  <MessageCircle className="h-8 w-8" />
-                </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-md">
-                  <Zap className="h-5 w-5 text-amber-500" />
-                </div>
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-100 text-violet-600">
-                  <Video className="h-8 w-8" />
-                </div>
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-md">
-                  <Shield className="h-5 w-5 text-emerald-500" />
-                </div>
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-100 text-emerald-600">
-                  <BarChart3 className="h-8 w-8" />
-                </div>
-              </div>
-              <div className="mx-auto max-w-sm space-y-3">
-                <div className="h-3 w-3/4 rounded-full bg-slate-200" />
-                <div className="h-3 w-full rounded-full bg-blue-100" />
-                <div className="h-3 w-5/6 rounded-full bg-slate-100" />
-              </div>
+          <div className="landing-logo-strip landing-reveal" style={{ '--delay': '0.1s' }}>
+            <span className="landing-logo-strip__label">
+              Used by teams building calmer, faster, more credible interview
+              workflows
+            </span>
+            <div className="landing-logo-strip__track">
+              {partnerMarks.map((mark) => (
+                <span key={mark} className="landing-logo-chip">
+                  {mark}
+                </span>
+              ))}
             </div>
           </div>
         </div>
       </section>
 
-      {/* STATS BAR */}
-      <section className="border-y border-slate-100 bg-slate-50/50 py-14">
-        <div className="container mx-auto max-w-4xl px-4 sm:px-6">
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-            {stats.map((stat, i) => (
-              <div
-                key={i}
-                className="rounded-2xl border border-slate-200 bg-white px-6 py-8 text-center shadow-sm"
+      <section id="why-canvue" className="landing-premium__section">
+        <div className="container">
+          <div className="landing-reveal">
+            <SectionHeading
+              eyebrow="Why teams switch"
+              title="Designed to make the interview feel better on both sides"
+              description="Canvue gives recruiting teams more control and better evidence while giving candidates a room that feels thoughtful instead of automated."
+            />
+          </div>
+
+          <div className="landing-stat-grid">
+            {stats.map((stat, index) => (
+              <article
+                key={stat.label}
+                className="landing-stat-card landing-reveal"
+                style={{ '--delay': `${index * 0.08}s` }}
               >
-                <span
-                  className="block text-4xl font-extrabold text-blue-600"
-                  style={{ fontFamily: 'var(--font-head)' }}
-                >
+                <span className="landing-stat-card__value">
                   <AnimatedNumber target={stat.num} suffix={stat.suffix} />
                 </span>
-                <span className="mt-1 block text-sm font-medium text-slate-500">
-                  {stat.label}
-                </span>
-              </div>
+                <h3>{stat.label}</h3>
+                <p>{stat.detail}</p>
+              </article>
             ))}
+          </div>
+
+          <div className="landing-story-layout">
+            <article className="landing-story-card landing-story-card--dark landing-reveal">
+              <span className="landing-story-card__kicker">
+                What makes the product land differently
+              </span>
+              <h3>
+                Most interview products optimize for throughput. The best ones
+                also protect tone, trust, and signal quality.
+              </h3>
+              <p>
+                Canvue is built around a simple premise: speed is only useful
+                if the interview still feels credible. That means a calm
+                candidate experience, a strong recruiter control layer, and a
+                report that helps the next decision happen faster.
+              </p>
+              <ul className="landing-check-list">
+                <li>
+                  <Check className="h-4 w-4" />
+                  One room for AI interviewing, live intervention, technical
+                  evaluation, and reporting.
+                </li>
+                <li>
+                  <Check className="h-4 w-4" />
+                  Structure for hiring teams without turning the experience into
+                  a robotic script.
+                </li>
+                <li>
+                  <Check className="h-4 w-4" />
+                  Clear proof of skill, communication, and integrity attached to
+                  every session.
+                </li>
+              </ul>
+            </article>
+
+            <div className="landing-pillar-grid">
+              {pillars.map((pillar, index) => {
+                const Icon = pillar.icon
+
+                return (
+                  <article
+                    key={pillar.title}
+                    className="landing-pillar-card landing-reveal"
+                    style={{ '--delay': `${0.08 + index * 0.08}s` }}
+                  >
+                    <div className="landing-pillar-card__icon">
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <h3>{pillar.title}</h3>
+                    <p>{pillar.description}</p>
+                  </article>
+                )
+              })}
+            </div>
           </div>
         </div>
       </section>
 
-      {/* FEATURES GRID */}
-      <section className="bg-slate-50 py-20 md:py-28">
-        <div className="container mx-auto max-w-5xl px-4 sm:px-6">
-          <div className="mb-12 text-center md:mb-16">
-            <h2
-              className="mb-3 text-3xl font-extrabold text-slate-900 sm:text-4xl"
-              style={{ fontFamily: 'var(--font-head)' }}
-            >
-              Everything you need to hire smarter
-            </h2>
-            <p className="mx-auto max-w-md text-base text-slate-500">
-              From AI-driven interviews to real-time proctoring — we've got it
-              covered.
-            </p>
+      <section id="workflow" className="landing-premium__section landing-premium__section--warm">
+        <div className="container">
+          <div className="landing-reveal">
+            <SectionHeading
+              eyebrow="How it works"
+              title="A four-step hiring flow that stays tight from setup to decision"
+              description="Every part of the process is designed to reduce interviewer overhead while preserving stronger candidate context."
+            />
           </div>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {features.map((f, i) => {
-              const Icon = f.icon
+
+          <div className="landing-timeline">
+            {workflow.map((item, index) => {
+              const Icon = item.icon
+
               return (
-                <div
-                  key={i}
-                  className="group rounded-2xl border border-slate-200 bg-white p-6 transition-shadow hover:shadow-md"
+                <article
+                  key={item.step}
+                  className="landing-timeline-card landing-reveal"
+                  style={{ '--delay': `${index * 0.08}s` }}
                 >
-                  <div className="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600 transition-colors group-hover:bg-blue-100">
+                  <div className="landing-timeline-card__step">{item.step}</div>
+                  <div className="landing-timeline-card__icon">
                     <Icon className="h-5 w-5" />
                   </div>
-                  <h3
-                    className="mb-2 text-base font-bold text-slate-900"
-                    style={{ fontFamily: 'var(--font-head)' }}
-                  >
-                    {f.title}
-                  </h3>
-                  <p className="text-sm leading-relaxed text-slate-500">
-                    {f.desc}
-                  </p>
-                </div>
+                  <h3>{item.title}</h3>
+                  <p>{item.description}</p>
+                </article>
               )
             })}
           </div>
         </div>
       </section>
 
-      {/* TESTIMONIALS */}
-      <section className="py-20 md:py-28">
-        <div className="container mx-auto max-w-5xl px-4 sm:px-6">
-          <div className="mb-12 text-center md:mb-16">
-            <h2
-              className="mb-3 text-3xl font-extrabold text-slate-900 sm:text-4xl"
-              style={{ fontFamily: 'var(--font-head)' }}
-            >
-              Loved by HR teams & candidates
-            </h2>
-            <p className="text-base text-slate-500">
-              Here's what people are saying
-            </p>
+      <section className="landing-premium__section">
+        <div className="container">
+          <div className="landing-reveal">
+            <SectionHeading
+              eyebrow="Capability stack"
+              title="Everything the interview needs, without making the page feel overloaded"
+              description="The product surface stays clean while the workflow underneath remains dense with signal, controls, and reporting depth."
+            />
           </div>
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {testimonials.map((t, i) => (
-              <div
-                key={i}
-                className="rounded-2xl border border-slate-200 bg-white p-6"
+
+          <div className="landing-feature-grid">
+            {features.map((feature, index) => {
+              const Icon = feature.icon
+
+              return (
+                <article
+                  key={feature.title}
+                  className="landing-feature-card landing-reveal"
+                  style={{ '--delay': `${index * 0.06}s` }}
+                >
+                  <div className="landing-feature-card__icon">
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <h3>{feature.title}</h3>
+                  <p>{feature.description}</p>
+                  <ul>
+                    {feature.points.map((point) => (
+                      <li key={point}>
+                        <Check className="h-4 w-4" />
+                        {point}
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              )
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section className="landing-premium__section">
+        <div className="container">
+          <div className="landing-showcase">
+            <div className="landing-showcase__copy landing-reveal">
+              <SectionHeading
+                eyebrow="Built for real-world hiring pressure"
+                title="Run volume, protect quality, and still make the experience feel high touch"
+                description="Canvue works across campus hiring, technical screening, high-volume qualification, and candidate practice because the room is structured without feeling cold."
+                align="left"
+              />
+
+              <div className="landing-audience-grid">
+                {audiences.map((audience, index) => (
+                  <article
+                    key={audience.title}
+                    className="landing-audience-card landing-reveal"
+                    style={{ '--delay': `${0.08 + index * 0.08}s` }}
+                  >
+                    <h3>{audience.title}</h3>
+                    <p>{audience.description}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="landing-command-card landing-reveal" style={{ '--delay': '0.12s' }}>
+              <div className="landing-command-card__header">
+                <div>
+                  <span className="landing-command-card__eyebrow">
+                    Hiring command center
+                  </span>
+                  <h3>One session, multiple layers of decision signal</h3>
+                </div>
+                <div className="landing-command-card__pulse">
+                  <span />
+                  Live
+                </div>
+              </div>
+
+              <div className="landing-command-card__metrics">
+                <article>
+                  <strong>92%</strong>
+                  <span>Role match</span>
+                </article>
+                <article>
+                  <strong>14m</strong>
+                  <span>Avg. screen time saved</span>
+                </article>
+                <article>
+                  <strong>3x</strong>
+                  <span>Faster reviewer handoff</span>
+                </article>
+              </div>
+
+              <div className="landing-command-card__feed">
+                <div>
+                  <p>Interview insight</p>
+                  <span>
+                    Candidate gave strong tradeoff reasoning on caching,
+                    latency, and queue backpressure.
+                  </span>
+                </div>
+                <div>
+                  <p>Integrity log</p>
+                  <span>
+                    Single tab-switch event detected. No additional anomalies
+                    recorded during the session.
+                  </span>
+                </div>
+                <div>
+                  <p>Recommended next step</p>
+                  <span>
+                    Advance to technical panel and share the exported session
+                    summary with the hiring manager.
+                  </span>
+                </div>
+              </div>
+
+              <div className="landing-command-card__tags">
+                <span>ATS-ready report</span>
+                <span>Code output attached</span>
+                <span>Transcript summary</span>
+                <span>Human intervention log</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="landing-premium__section landing-premium__section--muted">
+        <div className="container">
+          <div className="landing-reveal">
+            <SectionHeading
+              eyebrow="Social proof"
+              title="Loved by recruiters, operators, and candidates who want the process to feel credible"
+              description="Teams keep using Canvue because it reduces overhead without flattening the human side of interviewing."
+            />
+          </div>
+
+          <div className="landing-testimonial-grid">
+            {testimonials.map((testimonial, index) => (
+              <article
+                key={testimonial.name}
+                className="landing-testimonial-card landing-reveal"
+                style={{ '--delay': `${index * 0.08}s` }}
               >
-                <div className="mb-4 flex items-center gap-0.5">
-                  {[1, 2, 3, 4, 5].map((s) => (
+                <div className="landing-testimonial-card__stars">
+                  {[1, 2, 3, 4, 5].map((star) => (
                     <svg
-                      key={s}
-                      className="h-4 w-4 text-amber-400"
+                      key={star}
+                      className="h-4 w-4"
                       viewBox="0 0 24 24"
                       fill="currentColor"
                     >
@@ -281,165 +756,146 @@ export default function Landing() {
                     </svg>
                   ))}
                 </div>
-                <p className="mb-5 text-sm leading-relaxed text-slate-600 italic">
-                  &ldquo;{t.quote}&rdquo;
+                <p className="landing-testimonial-card__quote">
+                  &ldquo;{testimonial.quote}&rdquo;
                 </p>
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`flex h-10 w-10 items-center justify-center rounded-full text-sm font-bold text-white ${t.color}`}
-                  >
-                    {t.initials}
+                <div className="landing-testimonial-card__person">
+                  <div className="landing-testimonial-card__avatar">
+                    {testimonial.initials}
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-slate-900">
-                      {t.name}
-                    </p>
-                    <p className="text-xs text-slate-500">{t.role}</p>
+                    <h3>{testimonial.name}</h3>
+                    <p>{testimonial.role}</p>
                   </div>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
         </div>
       </section>
 
-      {/* PRICING */}
-      <section className="bg-slate-50 py-20 md:py-28">
+      <section id="pricing" className="landing-premium__section landing-reveal">
         <PricingSection />
       </section>
 
-      {/* FAQ */}
-      <section className="py-20 md:py-28">
-        <div className="container mx-auto max-w-2xl px-4 sm:px-6">
-          <div className="mb-12 text-center md:mb-16">
-            <h2
-              className="mb-3 text-3xl font-extrabold text-slate-900 sm:text-4xl"
-              style={{ fontFamily: 'var(--font-head)' }}
-            >
-              Frequently asked questions
-            </h2>
-            <p className="text-base text-slate-500">
-              Everything you need to know about Canvue
-            </p>
+      <section id="faq" className="landing-premium__section">
+        <div className="container">
+          <div className="landing-reveal">
+            <SectionHeading
+              eyebrow="FAQ"
+              title="Answers for teams evaluating Canvue right now"
+              description="The essentials on launch speed, interview formats, and what candidates need to join."
+            />
           </div>
-          <div className="space-y-3">
-            {faqs.map((faq, i) => (
-              <div
-                key={i}
-                className="overflow-hidden rounded-xl border border-slate-200 bg-white"
+
+          <div className="landing-faq-list">
+            {faqs.map((faq, index) => (
+              <article
+                key={faq.q}
+                className="landing-faq-card landing-reveal"
+                style={{ '--delay': `${index * 0.05}s` }}
               >
                 <button
-                  onClick={() => setOpenFaq(openFaq === i ? null : i)}
-                  className="flex w-full items-center justify-between px-5 py-4 text-left text-sm font-semibold text-slate-900 transition hover:bg-slate-50"
+                  type="button"
+                  onClick={() => setOpenFaq(openFaq === index ? null : index)}
+                  className="landing-faq-card__trigger"
                 >
-                  {faq.q}
+                  <span>{faq.q}</span>
                   <ChevronDown
-                    className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${
-                      openFaq === i ? 'rotate-180' : ''
+                    className={`h-4 w-4 ${
+                      openFaq === index ? 'rotate-180' : ''
                     }`}
                   />
                 </button>
-                {openFaq === i && (
-                  <div className="border-t border-slate-100 px-5 py-4 text-sm leading-relaxed text-slate-500">
-                    {faq.a}
-                  </div>
+                {openFaq === index && (
+                  <div className="landing-faq-card__content">{faq.a}</div>
                 )}
-              </div>
+              </article>
             ))}
           </div>
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="bg-gradient-to-r from-blue-600 to-violet-600 py-20 text-center text-white md:py-28">
-        <div className="container mx-auto max-w-xl px-4 sm:px-6">
-          <h2
-            className="mb-4 text-3xl font-extrabold sm:text-4xl"
-            style={{ fontFamily: 'var(--font-head)' }}
-          >
-            Ready to transform your hiring?
-          </h2>
-          <p className="mb-8 text-base text-blue-100">
-            Join 40+ companies already using Canvue to conduct smarter, fairer
-            interviews.
-          </p>
-          <div className="flex flex-wrap items-center justify-center gap-4">
-            <Link
-              to="/signup"
-              className="inline-flex items-center gap-2 rounded-full bg-white px-7 py-3.5 text-sm font-semibold text-blue-700 shadow-lg transition hover:bg-blue-50"
-            >
-              Start Free Trial
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-            <a
-              href="mailto:sales@canvue.ai"
-              className="inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-7 py-3.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/20"
-            >
-              Contact Sales
-            </a>
+      <section className="landing-premium__cta">
+        <div className="container">
+          <div className="landing-cta-card landing-reveal">
+            <div>
+              <span className="landing-eyebrow-text">
+                Ready to raise the standard?
+              </span>
+              <h2>Bring a more premium interview experience to your team.</h2>
+              <p>
+                Launch candidate practice, structured AI interviews, live
+                recruiter intervention, and ATS-ready reporting from one product.
+              </p>
+            </div>
+
+            <div className="landing-cta-card__actions">
+              <Link to="/signup" className="landing-btn landing-btn--primary">
+                Start free trial
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <a
+                href="mailto:sales@canvue.ai"
+                className="landing-btn landing-btn--secondary-dark"
+              >
+                Contact sales
+              </a>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* FOOTER */}
-      <footer className="border-t border-slate-200 bg-slate-50 py-12">
-        <div className="container mx-auto max-w-5xl px-4 sm:px-6">
-          <div className="mb-8 grid grid-cols-2 gap-8 sm:grid-cols-4">
-            <div className="col-span-2 sm:col-span-1">
-              <p
-                className="mb-2 text-lg font-extrabold tracking-wider text-slate-900"
-                style={{ fontFamily: 'var(--font-head)' }}
-              >
-                CAN<span className="text-blue-600">VUE</span>
-              </p>
-              <p className="text-sm leading-relaxed text-slate-500">
-                AI-powered interview platform for modern hiring teams.
+      <footer className="landing-footer">
+        <div className="container">
+          <div className="landing-footer__grid">
+            <div className="landing-footer__brand">
+              <div className="landing-footer__logo">
+                <span className="landing-footer__logo-mark">
+                  <Zap className="h-4 w-4" />
+                </span>
+                CANVUE
+              </div>
+              <p>
+                AI-powered interviewing for teams that want speed, stronger
+                signal, and a more credible candidate experience.
               </p>
             </div>
+
             <div>
-              <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">
-                Product
-              </p>
-              <ul className="space-y-2 text-sm text-slate-500">
-                <li><Link to="/" className="transition hover:text-blue-600">Features</Link></li>
-                <li><Link to="/" className="transition hover:text-blue-600">Pricing</Link></li>
-                <li><Link to="/" className="transition hover:text-blue-600">ATS Score</Link></li>
-                <li><Link to="/" className="transition hover:text-blue-600">Mock Interviews</Link></li>
+              <h3>Platform</h3>
+              <ul>
+                <li>Conversational AI interviews</li>
+                <li>Live proctoring</li>
+                <li>Technical assessments</li>
+                <li>ATS intelligence</li>
               </ul>
             </div>
+
             <div>
-              <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">
-                Resources
-              </p>
-              <ul className="space-y-2 text-sm text-slate-500">
-                <li><Link to="/" className="transition hover:text-blue-600">Documentation</Link></li>
-                <li><Link to="/" className="transition hover:text-blue-600">Blog</Link></li>
-                <li><Link to="/" className="transition hover:text-blue-600">Changelog</Link></li>
-                <li><Link to="/" className="transition hover:text-blue-600">Support</Link></li>
+              <h3>Use cases</h3>
+              <ul>
+                <li>Hiring teams</li>
+                <li>Candidate practice</li>
+                <li>Campus and cohort programs</li>
+                <li>Staffing workflows</li>
               </ul>
             </div>
+
             <div>
-              <p className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">
-                Company
-              </p>
-              <ul className="space-y-2 text-sm text-slate-500">
-                <li><Link to="/" className="transition hover:text-blue-600">About</Link></li>
-                <li><Link to="/" className="transition hover:text-blue-600">Careers</Link></li>
-                <li><Link to="/" className="transition hover:text-blue-600">Privacy Policy</Link></li>
-                <li><Link to="/" className="transition hover:text-blue-600">Terms of Service</Link></li>
+              <h3>Get in touch</h3>
+              <ul>
+                <li><Link to="/login">Login</Link></li>
+                <li><Link to="/signup">Start free trial</Link></li>
+                <li><a href="mailto:sales@canvue.ai">sales@canvue.ai</a></li>
+                <li><a href="mailto:hello@canvue.ai">hello@canvue.ai</a></li>
               </ul>
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 pt-6">
-            <p className="text-xs text-slate-400">
-              &copy; {new Date().getFullYear()} Canvue. All rights reserved.
-            </p>
-            <a
-              href="mailto:hello@canvue.ai"
-              className="text-xs font-medium text-blue-600 transition hover:text-blue-700"
-            >
-              hello@canvue.ai
-            </a>
+
+          <div className="landing-footer__bottom">
+            <p>&copy; {new Date().getFullYear()} Canvue. All rights reserved.</p>
+            <p>Browser-based interviewing with live recruiter control.</p>
           </div>
         </div>
       </footer>

@@ -15,16 +15,32 @@ const candidateLinks = [
   { to: '/candidate/ats-report', label: 'ATS Score' },
 ]
 
+const publicSections = [
+  { id: 'why-canvue', label: 'Why Canvue' },
+  { id: 'workflow', label: 'How It Works' },
+  { id: 'pricing', label: 'Pricing' },
+  { id: 'faq', label: 'FAQ' },
+]
+
 export default function Navbar() {
   const { currentUser, userRole, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [menuOpen, setMenuOpen] = useState(false)
+  const isPublicLanding = !currentUser && location.pathname === '/'
 
   async function handleLogout() {
     await logout()
     setMenuOpen(false)
     navigate('/')
+  }
+
+  function handlePublicScroll(sectionId) {
+    const section = document.getElementById(sectionId)
+    if (section) {
+      section.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+    setMenuOpen(false)
   }
 
   useEffect(() => {
@@ -39,7 +55,13 @@ export default function Navbar() {
   }
 
   return (
-    <nav style={styles.nav} className="site-nav">
+    <nav
+      style={{
+        ...styles.nav,
+        ...(isPublicLanding ? styles.navLanding : {}),
+      }}
+      className="site-nav"
+    >
       <div className="container site-nav__inner" style={styles.inner}>
         <Link to={currentUser ? (userRole === 'hr' ? '/hr' : '/candidate') : '/'} style={styles.logo}>
           <span style={styles.logoIcon}>
@@ -60,10 +82,38 @@ export default function Navbar() {
           <span style={styles.toggleBar} />
         </button>
         <div style={styles.links} className={`site-nav__links${menuOpen ? ' is-open' : ''}`}>
+          {isPublicLanding && publicSections.map(section => (
+            <button
+              key={section.id}
+              type="button"
+              onClick={() => handlePublicScroll(section.id)}
+              style={styles.publicLink}
+            >
+              {section.label}
+            </button>
+          ))}
           {!currentUser && (
             <>
-              <Link to="/login" className="btn btn-ghost" style={styles.navBtn}>Login</Link>
-              <Link to="/signup" className="btn btn-primary" style={styles.navBtn}>Sign Up</Link>
+              <Link
+                to="/login"
+                className="btn btn-ghost"
+                style={{
+                  ...styles.navBtn,
+                  ...(isPublicLanding ? styles.navBtnLandingSecondary : {}),
+                }}
+              >
+                Login
+              </Link>
+              <Link
+                to="/signup"
+                className="btn btn-primary"
+                style={{
+                  ...styles.navBtn,
+                  ...(isPublicLanding ? styles.navBtnLandingPrimary : {}),
+                }}
+              >
+                Start Free Trial
+              </Link>
             </>
           )}
           {currentUser && roleLinks.map(link => (
@@ -108,6 +158,11 @@ const styles = {
     top: 0,
     zIndex: 100,
   },
+  navLanding: {
+    background: 'rgba(248, 251, 255, 0.72)',
+    backdropFilter: 'blur(22px)',
+    borderBottom: '1px solid rgba(15, 23, 42, 0.08)',
+  },
   inner: {
     display: 'flex',
     alignItems: 'center',
@@ -130,11 +185,12 @@ const styles = {
   logoIcon: {
     width: '32px',
     height: '32px',
-    background: 'var(--gradient-primary)',
+    background: 'linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: '10px',
+    borderRadius: '11px',
+    boxShadow: '0 12px 28px rgba(15, 23, 42, 0.14)',
   },
   links: {
     display: 'flex',
@@ -159,6 +215,28 @@ const styles = {
   navBtn: {
     padding: '8px 16px',
     fontSize: '13px',
+  },
+  navBtnLandingPrimary: {
+    padding: '10px 18px',
+    borderRadius: '999px',
+    boxShadow: '0 18px 36px rgba(15, 23, 42, 0.14)',
+  },
+  navBtnLandingSecondary: {
+    padding: '10px 18px',
+    borderRadius: '999px',
+    background: 'rgba(255,255,255,0.68)',
+    borderColor: 'rgba(15, 23, 42, 0.1)',
+  },
+  publicLink: {
+    padding: '9px 12px',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    fontSize: '13px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    borderRadius: '999px',
+    transition: 'background 0.2s, color 0.2s, transform 0.2s',
   },
   toggle: {
     display: 'none',
