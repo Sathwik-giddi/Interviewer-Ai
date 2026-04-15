@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   MessageCircle,
@@ -17,30 +17,6 @@ import {
 } from 'lucide-react'
 import PricingSection from '../components/PricingSection'
 import '../styles/landing.css'
-
-function AnimatedNumber({ target, suffix = '' }) {
-  const [count, setCount] = useState(0)
-
-  useEffect(() => {
-    let start = 0
-    const duration = 2000
-    const step = Math.ceil(target / (duration / 16))
-    const timer = setInterval(() => {
-      start += step
-      if (start >= target) {
-        start = target
-        clearInterval(timer)
-      }
-      setCount(start)
-    }, 16)
-
-    return () => clearInterval(timer)
-  }, [target])
-
-  return (
-    <>{count.toLocaleString()}{suffix}</>
-  )
-}
 
 function SectionHeading({ eyebrow, title, description, align = 'center' }) {
   return (
@@ -67,64 +43,61 @@ const partnerMarks = [
 
 const heroSignals = [
   {
-    title: 'Conversation-first interviewing',
+    title: 'Conversational interviews',
     description:
-      'Adaptive prompts, real follow-up questions, and a calmer candidate experience.',
+      'Follow-up questions feel structured and human instead of robotic or one-way.',
   },
   {
-    title: 'Integrity built into the room',
+    title: 'Interview integrity built in',
     description:
-      'Video presence, tab events, and session alerts stay visible without extra installs.',
+      'Proctoring, presence checks, and event tracking stay inside the browser flow.',
   },
   {
-    title: 'Human takeover when it matters',
+    title: 'Human control when needed',
     description:
-      'HR can step into the session live instead of losing a strong candidate to the flow.',
+      'Recruiters can step into a live session without breaking candidate momentum.',
   },
 ]
 
 const stats = [
   {
-    num: 1500,
-    suffix: '+',
+    value: '1,500+',
     label: 'interviews orchestrated',
     detail:
-      'Across live hiring, candidate practice, and structured screening workflows.',
+      'Across hiring campaigns, candidate practice, and structured screening workflows.',
   },
   {
-    num: 98,
-    suffix: '%',
+    value: '98%',
     label: 'candidate satisfaction',
     detail:
-      'Driven by conversational pacing, clearer prompts, and a less robotic experience.',
+      'Driven by a calmer interview flow, clearer prompts, and better pacing.',
   },
   {
-    num: 40,
-    suffix: '+',
-    label: 'teams already onboard',
+    value: '40+',
+    label: 'teams onboarded',
     detail:
-      'Used by recruiting teams, staffing partners, and candidate preparation programs.',
+      'Used by recruiting teams, staffing partners, and interview preparation programs.',
   },
 ]
 
 const pillars = [
   {
     icon: MessageCircle,
-    title: 'Candidates feel guided, not processed',
+    title: 'A stronger candidate experience',
     description:
-      'The interview behaves like a real conversation, so strong candidates can show depth instead of guessing how to game a static form.',
+      'Candidates get a room that feels intentional, conversational, and credible from the first prompt onward.',
   },
   {
     icon: Shield,
-    title: 'Recruiters get evidence instead of instincts',
+    title: 'Clearer evidence for recruiters',
     description:
-      'Each session carries transcript highlights, integrity context, technical outputs, and a scorecard teams can actually act on.',
+      'Every session carries transcript context, integrity signals, technical outputs, and a usable scorecard.',
   },
   {
     icon: BarChart3,
-    title: 'Hiring leaders get a cleaner operating layer',
+    title: 'A cleaner operating layer',
     description:
-      'One product handles intake, interviewing, intervention, and reporting without forcing teams into fragmented tools.',
+      'One product connects intake, interviewing, intervention, and reporting without tool sprawl.',
   },
 ]
 
@@ -132,30 +105,30 @@ const workflow = [
   {
     step: '01',
     icon: FileText,
-    title: 'Load role context',
+    title: 'Load role and candidate context',
     description:
-      'Start with a job description, resume, and evaluation criteria so the interview is grounded before the session opens.',
+      'Start from the job brief, resume, and evaluation criteria so the interview is grounded before the session begins.',
   },
   {
     step: '02',
     icon: MessageCircle,
-    title: 'Run a live AI conversation',
+    title: 'Run a live AI interview',
     description:
-      'The interviewer adapts its follow-ups in real time, pushing deeper when a candidate shows confidence or clarity.',
+      'The system adapts follow-ups in real time to test clarity, judgment, and depth instead of running a rigid script.',
   },
   {
     step: '03',
     icon: Video,
-    title: 'Protect integrity without killing flow',
+    title: 'Keep the interview trustworthy',
     description:
-      'Keep browser-based proctoring, presence checks, and recruiter takeover available while the candidate stays in one room.',
+      'Browser-based proctoring and recruiter oversight protect integrity without adding friction for candidates.',
   },
   {
     step: '04',
     icon: BarChart3,
-    title: 'Ship scorecards immediately',
+    title: 'Send decision-ready reports',
     description:
-      'Export ATS insights, transcript summaries, and decision-ready reports as soon as the interview ends.',
+      'Teams finish each session with ATS context, transcripts, scorecards, and actionable next steps.',
   },
 ]
 
@@ -164,42 +137,42 @@ const features = [
     icon: MessageCircle,
     title: 'Two-way AI interviews',
     description:
-      'Move beyond one-way recordings. Canvue asks layered follow-up questions to test clarity, judgment, and real understanding.',
-    points: ['Dynamic follow-ups', 'Natural pacing', 'Role-aware depth'],
+      'Run real conversations with layered follow-ups that test more than rehearsed answers.',
+    points: ['Dynamic follow-ups', 'Natural pacing', 'Role-aware questioning'],
   },
   {
     icon: Shield,
     title: 'Live proctoring',
     description:
-      'Track face presence, tab switching, and suspicious events in the browser, then keep the full trail attached to the report.',
-    points: ['Face tracking', 'Tab event alerts', 'Integrity summary'],
+      'Keep face presence, tab events, and suspicious activity attached to the interview record.',
+    points: ['Face tracking', 'Tab-switch alerts', 'Integrity summary'],
   },
   {
     icon: Globe,
     title: 'Multilingual avatars',
     description:
-      'Give candidates a more inclusive interview room with voice-led interactions in English, Hindi, and Telugu.',
-    points: ['Voice-led flow', 'Multiple languages', 'Calmer candidate UX'],
+      'Support candidates with voice-led sessions in English, Hindi, and Telugu.',
+    points: ['Voice-led flow', 'Multiple languages', 'Lower friction'],
   },
   {
     icon: Code,
-    title: 'Technical assessment inside the interview',
+    title: 'Technical evaluation in-session',
     description:
-      'Candidates can write and run code without leaving the session while evaluators still receive a structured summary.',
-    points: ['Built-in editor', 'Execution-ready', 'Logic and syntax review'],
+      'Candidates can write and run code without leaving the interview room.',
+    points: ['Built-in editor', 'Execution ready', 'Structured evaluation'],
   },
   {
     icon: Users,
     title: 'Live HR intervention',
     description:
-      'When a session needs nuance, context, or rescue, recruiters can jump in with real-time audio instead of restarting the process.',
-    points: ['Instant takeover', 'Higher save rate', 'Human where needed'],
+      'Recruiters can join at the right moment when nuance, rescue, or clarification matters.',
+    points: ['Instant takeover', 'Higher save rate', 'Human handoff'],
   },
   {
     icon: FileText,
     title: 'ATS and interview intelligence',
     description:
-      'Score resumes, align skills to roles, and carry that intelligence into the interview so the entire pipeline stays connected.',
+      'Resume parsing, skill matching, and reports stay connected through the full workflow.',
     points: ['Resume parsing', 'Match scoring', 'Exportable reports'],
   },
 ]
@@ -208,17 +181,17 @@ const audiences = [
   {
     title: 'Hiring teams',
     description:
-      'Standardize first-round screens without reducing candidates to rigid scripts or clumsy forms.',
+      'Standardize first-round interviews without reducing candidates to static form responses.',
   },
   {
     title: 'Candidate prep programs',
     description:
-      'Offer polished mock interviews and sharper feedback for students, job seekers, and internal training cohorts.',
+      'Offer realistic mock interviews and sharper feedback for students, job seekers, and cohorts.',
   },
   {
-    title: 'Staffing and staffing-adjacent teams',
+    title: 'Staffing teams',
     description:
-      'Pre-qualify volume quickly and still send clients richer evidence than notes from a rushed screening call.',
+      'Pre-qualify volume quickly and still hand clients stronger evidence than screening notes.',
   },
 ]
 
@@ -232,14 +205,14 @@ const testimonials = [
   },
   {
     quote:
-      'The live HR intervention feature has saved multiple high-intent candidates for us. That single capability makes the platform feel designed by people who understand hiring.',
+      'The live HR intervention feature has saved multiple high-intent candidates for us. It feels like the product was designed by people who understand hiring pressure.',
     name: 'Michael Torres',
     role: 'Head of Talent Ops, BluePeak Systems',
     initials: 'MT',
   },
   {
     quote:
-      'I used it for mock interviews before my onsite rounds. The follow-up questions were much more realistic than the usual practice tools and the feedback was specific.',
+      'I used it for mock interviews before my onsite rounds. The follow-up questions felt much more realistic than the usual practice tools.',
     name: 'Priya Sharma',
     role: 'Software Engineer',
     initials: 'PS',
@@ -249,70 +222,47 @@ const testimonials = [
 const faqs = [
   {
     q: 'How quickly can a team get started?',
-    a: 'Most teams can launch the same day. You can create campaigns, upload role context, and start running interviews without additional downloads or desktop software.',
+    a: 'Most teams can launch the same day. Campaign setup, role context, and session creation are all designed to be lightweight.',
   },
   {
-    q: 'Can recruiters really step into a live interview?',
-    a: 'Yes. Canvue supports live HR intervention through an in-session audio bridge, so your team can take over when a candidate needs clarification or when a strong conversation deserves a human handoff.',
+    q: 'Can recruiters step into a live interview?',
+    a: 'Yes. Canvue supports live HR intervention through an in-session audio bridge, so your team can take over without restarting the session.',
   },
   {
-    q: 'Does it support technical or coding interviews?',
-    a: 'Yes. The platform includes a built-in code editor and lets teams combine conversational questioning with live coding tasks and structured evaluation.',
+    q: 'Does it support technical interviews?',
+    a: 'Yes. The product includes a built-in code editor and lets teams combine conversational questioning with technical evaluation.',
   },
   {
     q: 'Do candidates need to install anything?',
-    a: 'No. Interviews run in the browser with built-in proctoring and media checks, which keeps onboarding friction low for both candidates and recruiters.',
+    a: 'No. Interviews run in the browser with built-in media checks and integrity signals, which keeps onboarding simple.',
   },
   {
-    q: 'Can candidates use Canvue for practice too?',
-    a: 'Yes. The candidate plans are designed for mock interviews, interview prep, and ATS-focused resume feedback before a real hiring process begins.',
+    q: 'Can candidates also use it for practice?',
+    a: 'Yes. Candidate plans are built for mock interviews, prep loops, and ATS-focused resume feedback.',
   },
 ]
 
 export default function Landing() {
   const [openFaq, setOpenFaq] = useState(0)
 
-  useEffect(() => {
-    const elements = document.querySelectorAll('.landing-reveal')
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-visible')
-            observer.unobserve(entry.target)
-          }
-        })
-      },
-      { threshold: 0.12, rootMargin: '0px 0px -40px 0px' },
-    )
-
-    elements.forEach((element) => observer.observe(element))
-    return () => observer.disconnect()
-  }, [])
-
   return (
     <div className="landing-premium">
       <section className="landing-premium__hero">
-        <div className="landing-premium__mesh" />
-        <div className="landing-premium__glow landing-premium__glow--left" />
-        <div className="landing-premium__glow landing-premium__glow--right" />
-        <div className="landing-premium__beam landing-premium__beam--one" />
-        <div className="landing-premium__beam landing-premium__beam--two" />
         <div className="container">
           <div className="landing-hero-grid">
-            <div className="landing-hero-copy landing-reveal is-visible">
-              <div className="landing-eyebrow landing-eyebrow--animated">
+            <div className="landing-hero-copy">
+              <div className="landing-eyebrow">
                 <Sparkles className="h-4 w-4" />
-                Live AI interviews with human control
+                AI interviewing with recruiter control
               </div>
               <h1 className="landing-hero-title">
-                The interview platform that feels premium to candidates and
-                precise to hiring teams.
+                A premium interview platform for teams that want speed,
+                structure, and trust.
               </h1>
               <p className="landing-hero-text">
-                Canvue combines conversational AI, live proctoring,
-                multilingual avatars, recruiter takeover, and ATS intelligence
-                in one polished interview room.
+                Canvue combines conversational AI interviews, live proctoring,
+                recruiter intervention, multilingual avatars, and ATS-aligned
+                reporting in one product built for modern hiring operations.
               </p>
               <div className="landing-hero-actions">
                 <Link to="/signup" className="landing-btn landing-btn--primary">
@@ -323,20 +273,16 @@ export default function Landing() {
                   href="mailto:sales@canvue.ai"
                   className="landing-btn landing-btn--secondary"
                 >
-                  Book a team demo
+                  Book a demo
                 </a>
               </div>
               <p className="landing-hero-caption">
-                No credit card required. Free candidate plan available.
+                No credit card required. Candidate practice plan included.
               </p>
 
               <div className="landing-hero-signal-grid">
-                {heroSignals.map((signal, index) => (
-                  <article
-                    key={signal.title}
-                    className="landing-signal-card landing-reveal is-visible"
-                    style={{ '--delay': `${0.14 + index * 0.08}s` }}
-                  >
+                {heroSignals.map((signal) => (
+                  <article key={signal.title} className="landing-signal-card">
                     <h3>{signal.title}</h3>
                     <p>{signal.description}</p>
                   </article>
@@ -344,16 +290,8 @@ export default function Landing() {
               </div>
             </div>
 
-            <div className="landing-console landing-reveal is-visible" style={{ '--delay': '0.18s' }}>
-              <div className="landing-console__float landing-console__float--left">
-                <span>Candidate calm score</span>
-                <strong>+32%</strong>
-              </div>
-              <div className="landing-console__float landing-console__float--right">
-                <span>Recruiter control</span>
-                <strong>Live handoff</strong>
-              </div>
-              <div className="landing-console__frame landing-console__frame--animated">
+            <div className="landing-console">
+              <div className="landing-console__frame">
                 <div className="landing-console__topbar">
                   <div className="landing-console__traffic">
                     <span />
@@ -386,16 +324,16 @@ export default function Landing() {
                   <div className="landing-console__layout">
                     <div className="landing-console__panel landing-console__panel--feature">
                       <p className="landing-console__label">AI interviewer</p>
-                      <h4>Follow-up depth increased after a strong API answer</h4>
+                      <h4>Depth increases when the answer is strong</h4>
                       <p className="landing-console__copy">
-                        The interviewer is pushing into system design tradeoffs,
-                        scaling concerns, and failure handling instead of moving
-                        to the next scripted question.
+                        Instead of moving mechanically to the next question, the
+                        interviewer pushes into tradeoffs, reasoning, and real
+                        decision-making.
                       </p>
                       <div className="landing-console__transcript">
                         <span>AI</span>
-                        Walk me through how you would prevent abuse on a public
-                        rate-limited endpoint while keeping latency low.
+                        Walk me through how you would protect a public API from
+                        abuse while keeping latency low at scale.
                       </div>
                       <div className="landing-console__chips">
                         <span>Adaptive follow-up</span>
@@ -424,9 +362,7 @@ export default function Landing() {
                       </div>
 
                       <div className="landing-console__panel">
-                        <p className="landing-console__label">
-                          Scorecard snapshot
-                        </p>
+                        <p className="landing-console__label">Scorecard snapshot</p>
                         <div className="landing-console__score">
                           <div className="landing-console__score-row">
                             <span>Communication</span>
@@ -450,9 +386,7 @@ export default function Landing() {
                       </div>
 
                       <div className="landing-console__panel">
-                        <p className="landing-console__label">
-                          Recruiter actions
-                        </p>
+                        <p className="landing-console__label">Recruiter actions</p>
                         <ul className="landing-console__actions">
                           <li>Join live audio</li>
                           <li>Tag candidate for fast-track review</li>
@@ -466,9 +400,9 @@ export default function Landing() {
             </div>
           </div>
 
-          <div className="landing-logo-strip landing-reveal" style={{ '--delay': '0.1s' }}>
+          <div className="landing-logo-strip">
             <span className="landing-logo-strip__label">
-              Used by teams building calmer, faster, more credible interview
+              Used by teams building calmer, faster, and more credible interview
               workflows
             </span>
             <div className="landing-logo-strip__track">
@@ -484,24 +418,16 @@ export default function Landing() {
 
       <section id="why-canvue" className="landing-premium__section">
         <div className="container">
-          <div className="landing-reveal">
-            <SectionHeading
-              eyebrow="Why teams switch"
-              title="Designed to make the interview feel better on both sides"
-              description="Canvue gives recruiting teams more control and better evidence while giving candidates a room that feels thoughtful instead of automated."
-            />
-          </div>
+          <SectionHeading
+            eyebrow="Why teams switch"
+            title="Designed to make the interview feel better on both sides"
+            description="Canvue gives recruiting teams more control and better evidence while giving candidates a room that feels polished instead of automated."
+          />
 
           <div className="landing-stat-grid">
-            {stats.map((stat, index) => (
-              <article
-                key={stat.label}
-                className="landing-stat-card landing-reveal"
-                style={{ '--delay': `${index * 0.08}s` }}
-              >
-                <span className="landing-stat-card__value">
-                  <AnimatedNumber target={stat.num} suffix={stat.suffix} />
-                </span>
+            {stats.map((stat) => (
+              <article key={stat.label} className="landing-stat-card">
+                <span className="landing-stat-card__value">{stat.value}</span>
                 <h3>{stat.label}</h3>
                 <p>{stat.detail}</p>
               </article>
@@ -509,49 +435,45 @@ export default function Landing() {
           </div>
 
           <div className="landing-story-layout">
-            <article className="landing-story-card landing-story-card--dark landing-reveal">
+            <article className="landing-story-card landing-story-card--dark">
               <span className="landing-story-card__kicker">
                 What makes the product land differently
               </span>
               <h3>
-                Most interview products optimize for throughput. The best ones
-                also protect tone, trust, and signal quality.
+                The best interview software does more than automate. It protects
+                tone, trust, and decision quality.
               </h3>
               <p>
-                Canvue is built around a simple premise: speed is only useful
-                if the interview still feels credible. That means a calm
-                candidate experience, a strong recruiter control layer, and a
-                report that helps the next decision happen faster.
+                Canvue is built for teams that need throughput without making
+                the first impression feel cold. The result is a product that
+                looks premium to candidates and stays operationally useful for
+                recruiters.
               </p>
               <ul className="landing-check-list">
                 <li>
                   <Check className="h-4 w-4" />
-                  One room for AI interviewing, live intervention, technical
+                  One room for AI interviews, recruiter takeover, technical
                   evaluation, and reporting.
                 </li>
                 <li>
                   <Check className="h-4 w-4" />
-                  Structure for hiring teams without turning the experience into
-                  a robotic script.
+                  Stronger structure for hiring teams without flattening the
+                  human side of the interview.
                 </li>
                 <li>
                   <Check className="h-4 w-4" />
-                  Clear proof of skill, communication, and integrity attached to
-                  every session.
+                  Better proof of skill, communication, and integrity attached
+                  to every session.
                 </li>
               </ul>
             </article>
 
             <div className="landing-pillar-grid">
-              {pillars.map((pillar, index) => {
+              {pillars.map((pillar) => {
                 const Icon = pillar.icon
 
                 return (
-                  <article
-                    key={pillar.title}
-                    className="landing-pillar-card landing-reveal"
-                    style={{ '--delay': `${0.08 + index * 0.08}s` }}
-                  >
+                  <article key={pillar.title} className="landing-pillar-card">
                     <div className="landing-pillar-card__icon">
                       <Icon className="h-5 w-5" />
                     </div>
@@ -567,24 +489,18 @@ export default function Landing() {
 
       <section id="workflow" className="landing-premium__section landing-premium__section--warm">
         <div className="container">
-          <div className="landing-reveal">
-            <SectionHeading
-              eyebrow="How it works"
-              title="A four-step hiring flow that stays tight from setup to decision"
-              description="Every part of the process is designed to reduce interviewer overhead while preserving stronger candidate context."
-            />
-          </div>
+          <SectionHeading
+            eyebrow="How it works"
+            title="A high-trust hiring flow from setup to decision"
+            description="Every step is designed to reduce interviewer overhead while preserving stronger candidate context."
+          />
 
           <div className="landing-timeline">
-            {workflow.map((item, index) => {
+            {workflow.map((item) => {
               const Icon = item.icon
 
               return (
-                <article
-                  key={item.step}
-                  className="landing-timeline-card landing-reveal"
-                  style={{ '--delay': `${index * 0.08}s` }}
-                >
+                <article key={item.step} className="landing-timeline-card">
                   <div className="landing-timeline-card__step">{item.step}</div>
                   <div className="landing-timeline-card__icon">
                     <Icon className="h-5 w-5" />
@@ -600,24 +516,18 @@ export default function Landing() {
 
       <section className="landing-premium__section">
         <div className="container">
-          <div className="landing-reveal">
-            <SectionHeading
-              eyebrow="Capability stack"
-              title="Everything the interview needs, without making the page feel overloaded"
-              description="The product surface stays clean while the workflow underneath remains dense with signal, controls, and reporting depth."
-            />
-          </div>
+          <SectionHeading
+            eyebrow="Capability stack"
+            title="Everything the interview needs, presented in one clean product layer"
+            description="The surface stays simple while the workflow underneath remains dense with signal, controls, and reporting depth."
+          />
 
           <div className="landing-feature-grid">
-            {features.map((feature, index) => {
+            {features.map((feature) => {
               const Icon = feature.icon
 
               return (
-                <article
-                  key={feature.title}
-                  className="landing-feature-card landing-reveal"
-                  style={{ '--delay': `${index * 0.06}s` }}
-                >
+                <article key={feature.title} className="landing-feature-card">
                   <div className="landing-feature-card__icon">
                     <Icon className="h-5 w-5" />
                   </div>
@@ -641,21 +551,17 @@ export default function Landing() {
       <section className="landing-premium__section">
         <div className="container">
           <div className="landing-showcase">
-            <div className="landing-showcase__copy landing-reveal">
+            <div className="landing-showcase__copy">
               <SectionHeading
                 eyebrow="Built for real-world hiring pressure"
-                title="Run volume, protect quality, and still make the experience feel high touch"
-                description="Canvue works across campus hiring, technical screening, high-volume qualification, and candidate practice because the room is structured without feeling cold."
+                title="Run volume, protect quality, and still make the process feel high touch"
+                description="Canvue works across campus hiring, technical screening, staffing workflows, and candidate practice because the room stays structured without feeling cold."
                 align="left"
               />
 
               <div className="landing-audience-grid">
-                {audiences.map((audience, index) => (
-                  <article
-                    key={audience.title}
-                    className="landing-audience-card landing-reveal"
-                    style={{ '--delay': `${0.08 + index * 0.08}s` }}
-                  >
+                {audiences.map((audience) => (
+                  <article key={audience.title} className="landing-audience-card">
                     <h3>{audience.title}</h3>
                     <p>{audience.description}</p>
                   </article>
@@ -663,13 +569,13 @@ export default function Landing() {
               </div>
             </div>
 
-            <div className="landing-command-card landing-reveal" style={{ '--delay': '0.12s' }}>
+            <div className="landing-command-card">
               <div className="landing-command-card__header">
                 <div>
                   <span className="landing-command-card__eyebrow">
                     Hiring command center
                   </span>
-                  <h3>One session, multiple layers of decision signal</h3>
+                  <h3>One session, multiple layers of useful decision signal</h3>
                 </div>
                 <div className="landing-command-card__pulse">
                   <span />
@@ -684,7 +590,7 @@ export default function Landing() {
                 </article>
                 <article>
                   <strong>14m</strong>
-                  <span>Avg. screen time saved</span>
+                  <span>Average screening time saved</span>
                 </article>
                 <article>
                   <strong>3x</strong>
@@ -696,7 +602,7 @@ export default function Landing() {
                 <div>
                   <p>Interview insight</p>
                   <span>
-                    Candidate gave strong tradeoff reasoning on caching,
+                    Candidate showed strong tradeoff reasoning on caching,
                     latency, and queue backpressure.
                   </span>
                 </div>
@@ -704,14 +610,14 @@ export default function Landing() {
                   <p>Integrity log</p>
                   <span>
                     Single tab-switch event detected. No additional anomalies
-                    recorded during the session.
+                    were recorded during the session.
                   </span>
                 </div>
                 <div>
                   <p>Recommended next step</p>
                   <span>
-                    Advance to technical panel and share the exported session
-                    summary with the hiring manager.
+                    Advance to a technical panel and share the exported summary
+                    with the hiring manager.
                   </span>
                 </div>
               </div>
@@ -720,7 +626,7 @@ export default function Landing() {
                 <span>ATS-ready report</span>
                 <span>Code output attached</span>
                 <span>Transcript summary</span>
-                <span>Human intervention log</span>
+                <span>Intervention log</span>
               </div>
             </div>
           </div>
@@ -729,20 +635,17 @@ export default function Landing() {
 
       <section className="landing-premium__section landing-premium__section--muted">
         <div className="container">
-          <div className="landing-reveal">
-            <SectionHeading
-              eyebrow="Social proof"
-              title="Loved by recruiters, operators, and candidates who want the process to feel credible"
-              description="Teams keep using Canvue because it reduces overhead without flattening the human side of interviewing."
-            />
-          </div>
+          <SectionHeading
+            eyebrow="Social proof"
+            title="Loved by recruiters, operators, and candidates who want the process to feel credible"
+            description="Teams keep using Canvue because it reduces overhead without flattening the human side of interviewing."
+          />
 
           <div className="landing-testimonial-grid">
-            {testimonials.map((testimonial, index) => (
+            {testimonials.map((testimonial) => (
               <article
                 key={testimonial.name}
-                className="landing-testimonial-card landing-reveal"
-                style={{ '--delay': `${index * 0.08}s` }}
+                className="landing-testimonial-card"
               >
                 <div className="landing-testimonial-card__stars">
                   {[1, 2, 3, 4, 5].map((star) => (
@@ -774,27 +677,21 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="pricing" className="landing-premium__section landing-reveal">
+      <section id="pricing" className="landing-premium__section">
         <PricingSection />
       </section>
 
       <section id="faq" className="landing-premium__section">
         <div className="container">
-          <div className="landing-reveal">
-            <SectionHeading
-              eyebrow="FAQ"
-              title="Answers for teams evaluating Canvue right now"
-              description="The essentials on launch speed, interview formats, and what candidates need to join."
-            />
-          </div>
+          <SectionHeading
+            eyebrow="FAQ"
+            title="Answers for teams evaluating Canvue right now"
+            description="The essentials on launch speed, interview formats, and what candidates need to join."
+          />
 
           <div className="landing-faq-list">
             {faqs.map((faq, index) => (
-              <article
-                key={faq.q}
-                className="landing-faq-card landing-reveal"
-                style={{ '--delay': `${index * 0.05}s` }}
-              >
+              <article key={faq.q} className="landing-faq-card">
                 <button
                   type="button"
                   onClick={() => setOpenFaq(openFaq === index ? null : index)}
@@ -818,15 +715,16 @@ export default function Landing() {
 
       <section className="landing-premium__cta">
         <div className="container">
-          <div className="landing-cta-card landing-reveal">
+          <div className="landing-cta-card">
             <div>
               <span className="landing-eyebrow-text">
                 Ready to raise the standard?
               </span>
-              <h2>Bring a more premium interview experience to your team.</h2>
+              <h2>Bring a calmer, stronger interview experience to your team.</h2>
               <p>
                 Launch candidate practice, structured AI interviews, live
-                recruiter intervention, and ATS-ready reporting from one product.
+                recruiter intervention, and ATS-ready reporting from one premium
+                workflow.
               </p>
             </div>
 
@@ -873,7 +771,7 @@ export default function Landing() {
             </div>
 
             <div>
-              <h3>Use cases</h3>
+              <h3>Use Cases</h3>
               <ul>
                 <li>Hiring teams</li>
                 <li>Candidate practice</li>

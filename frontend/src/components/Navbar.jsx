@@ -38,7 +38,7 @@ export default function Navbar() {
   function handlePublicScroll(sectionId) {
     const section = document.getElementById(sectionId)
     if (section) {
-      section.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      section.scrollIntoView({ block: 'start' })
     }
     setMenuOpen(false)
   }
