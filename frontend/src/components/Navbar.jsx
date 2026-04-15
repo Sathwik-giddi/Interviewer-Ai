@@ -159,9 +159,8 @@ const styles = {
     zIndex: 100,
   },
   navLanding: {
-    background: 'rgba(248, 251, 255, 0.72)',
-    backdropFilter: 'blur(22px)',
-    borderBottom: '1px solid rgba(15, 23, 42, 0.08)',
+    background: '#ffffff',
+    borderBottom: '1px solid #dbe1ea',
   },
   inner: {
     display: 'flex',
@@ -185,12 +184,11 @@ const styles = {
   logoIcon: {
     width: '32px',
     height: '32px',
-    background: 'linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%)',
+    background: '#2563eb',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: '11px',
-    boxShadow: '0 12px 28px rgba(15, 23, 42, 0.14)',
   },
   links: {
     display: 'flex',
@@ -219,13 +217,12 @@ const styles = {
   navBtnLandingPrimary: {
     padding: '10px 18px',
     borderRadius: '999px',
-    boxShadow: '0 18px 36px rgba(15, 23, 42, 0.14)',
   },
   navBtnLandingSecondary: {
     padding: '10px 18px',
     borderRadius: '999px',
-    background: 'rgba(255,255,255,0.68)',
-    borderColor: 'rgba(15, 23, 42, 0.1)',
+    background: '#ffffff',
+    borderColor: '#dbe1ea',
   },
   publicLink: {
     padding: '9px 12px',
@@ -236,7 +233,7 @@ const styles = {
     fontWeight: 600,
     cursor: 'pointer',
     borderRadius: '999px',
-    transition: 'background 0.2s, color 0.2s, transform 0.2s',
+    transition: 'background 0.2s, color 0.2s',
   },
   toggle: {
     display: 'none',

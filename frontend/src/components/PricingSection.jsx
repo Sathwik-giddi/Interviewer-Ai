@@ -79,10 +79,10 @@ export default function PricingSection() {
     <div className="container mx-auto max-w-6xl px-4 sm:px-6">
       <div className="landing-section-heading">
         <span className="landing-eyebrow-text">Pricing</span>
-        <h2>Pricing that scales from practice mode to full hiring operations</h2>
+        <h2>Simple pricing</h2>
         <p>
-          Start simple, prove value quickly, then move into a plan that matches
-          your interview volume and operational depth.
+          Start with the plan that fits you now. Move up when you need more
+          interviews, more reports, or more team features.
         </p>
       </div>
 
