@@ -28,6 +28,7 @@ export default function HRDashboard() {
   const [quickLinks, setQuickLinks] = useState(() => {
     try { return JSON.parse(localStorage.getItem('hr_quick_links') || '[]') } catch { return [] }
   })
+  const [quickSessionTitle, setQuickSessionTitle] = useState('')
 
   const [form, setForm] = useState({ title: '', jobDescription: '', skills: '', experienceYears: '0-2' })
   const [resumeFile, setResumeFile] = useState(null)
@@ -73,10 +74,17 @@ export default function HRDashboard() {
 
   function generateQuickLink() {
     const id = 'hr-' + Math.random().toString(36).slice(2, 8) + '-' + Date.now().toString(36)
-    const link = { id, title: form.title || 'Interview Session', createdAt: new Date().toISOString(), url: interviewUrl(id), observeUrl: observerUrl(id) }
+    const link = {
+      id,
+      title: quickSessionTitle.trim() || 'Interview Session',
+      createdAt: new Date().toISOString(),
+      url: interviewUrl(id),
+      observeUrl: observerUrl(id),
+    }
     const updated = [link, ...quickLinks]
     setQuickLinks(updated)
     localStorage.setItem('hr_quick_links', JSON.stringify(updated))
+    setQuickSessionTitle('')
     toast.success('Interview link generated!')
     return link
   }
@@ -159,6 +167,58 @@ export default function HRDashboard() {
     { key: 'create', label: 'New Campaign' },
   ]
   const completedSessions = recentSessions.filter(s => s.status === 'completed')
+  const activeSessions = recentSessions.filter(s => s.status && s.status !== 'completed')
+  const avgCompletedScore = completedSessions.length
+    ? Math.round(completedSessions.reduce((sum, session) => sum + (session.overallScore || 0), 0) / completedSessions.length)
+    : null
+  const uniqueCandidates = new Set(
+    recentSessions
+      .map(session => session.candidateId || session.candidateEmail || session.candidateName)
+      .filter(Boolean)
+  ).size
+  const firstName = currentUser?.displayName?.split(' ')[0] || currentUser?.email?.split('@')[0] || 'HR'
+  const commandCards = [
+    {
+      key: 'reports',
+      eyebrow: 'Reports',
+      title: `${completedSessions.length} completed interviews`,
+      copy: 'Open feedback reports and move faster on decisions.',
+      value: avgCompletedScore != null ? `${avgCompletedScore}/100 avg` : 'No scores yet',
+      accent: 'linear-gradient(135deg, #6d28d9, #8b5cf6)',
+      actionLabel: 'Open Reports',
+      onClick: () => navigate('/hr/reports'),
+    },
+    {
+      key: 'candidates',
+      eyebrow: 'Candidates',
+      title: `${uniqueCandidates || 0} candidates tracked`,
+      copy: 'Review pipeline health and check who still needs attention.',
+      value: `${activeSessions.length} live or pending`,
+      accent: 'linear-gradient(135deg, #0f766e, #14b8a6)',
+      actionLabel: 'View Candidates',
+      onClick: () => navigate('/hr/candidates'),
+    },
+    {
+      key: 'analytics',
+      eyebrow: 'Analytics',
+      title: `${campaigns.length} active campaigns`,
+      copy: 'See score patterns, pass rates, and interview activity.',
+      value: recentSessions.length ? `${recentSessions.length} recent sessions` : 'Waiting for activity',
+      accent: 'linear-gradient(135deg, #c2410c, #fb923c)',
+      actionLabel: 'Open Analytics',
+      onClick: () => navigate('/hr/analytics'),
+    },
+    {
+      key: 'campaign',
+      eyebrow: 'Campaign Setup',
+      title: 'Create a structured interview',
+      copy: 'Generate a question pool from the job description and required skills.',
+      value: 'New role intake',
+      accent: 'linear-gradient(135deg, #1d4ed8, #38bdf8)',
+      actionLabel: 'Create Campaign',
+      onClick: () => setTab('create'),
+    },
+  ]
 
   return (
     <div className="page-enter app-page dashboard-page hr-dashboard" style={{ minHeight: 'calc(100vh - 60px)', background: '#f7f6fb' }}>
@@ -168,7 +228,7 @@ export default function HRDashboard() {
         <div style={S.topRow} className="page-header">
           <div>
             <h1 style={S.greeting}>
-              Welcome, <span style={{ color: 'var(--primary)' }}>{currentUser.email?.split('@')[0]}</span>
+              Welcome, <span style={{ color: 'var(--primary)' }}>{firstName}</span>
             </h1>
             <p style={S.greetingSub}>Manage interviews, generate links, and observe candidates live.</p>
           </div>
@@ -218,6 +278,29 @@ export default function HRDashboard() {
         {/* ═══ OVERVIEW ═══ */}
         {tab === 'overview' && (
           <>
+            <div style={S.commandSection}>
+              <div style={S.sectionHeader}>
+                <h3 style={S.sectionTitle}>Command Center</h3>
+                <span style={S.sectionCount}>{commandCards.length}</span>
+              </div>
+              <div className="cards-grid" style={S.commandGrid}>
+                {commandCards.map(card => (
+                  <button key={card.key} type="button" style={S.commandCard} onClick={card.onClick}>
+                    <div style={{ ...S.commandAccent, background: card.accent }} />
+                    <div style={S.commandBody}>
+                      <span style={S.commandEyebrow}>{card.eyebrow}</span>
+                      <h4 style={S.commandTitle}>{card.title}</h4>
+                      <p style={S.commandCopy}>{card.copy}</p>
+                    </div>
+                    <div style={S.commandFooter}>
+                      <span style={S.commandValue}>{card.value}</span>
+                      <span style={S.commandAction}>{card.actionLabel}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Quick link generator card */}
             <div style={S.genCard} className="dashboard-hero">
               <div style={S.genCardLeft}>
@@ -231,8 +314,8 @@ export default function HRDashboard() {
               </div>
               <div style={S.genCardRight} className="responsive-toolbar">
                 <input
-                  value={form.title}
-                  onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+                  value={quickSessionTitle}
+                  onChange={e => setQuickSessionTitle(e.target.value)}
                   placeholder="Session name (optional)"
                   style={S.genInput}
                 />
@@ -689,6 +772,71 @@ const S = {
   },
 
   // ── Generate card ──
+  commandSection: {
+    marginBottom: '24px',
+  },
+  commandGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+    gap: '16px',
+  },
+  commandCard: {
+    background: '#fff',
+    border: '1px solid #eee',
+    borderRadius: '0px',
+    padding: 0,
+    textAlign: 'left',
+    cursor: 'pointer',
+    overflow: 'hidden',
+    transition: 'transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease',
+  },
+  commandAccent: {
+    height: '6px',
+    width: '100%',
+  },
+  commandBody: {
+    padding: '18px 18px 12px',
+  },
+  commandEyebrow: {
+    display: 'inline-block',
+    fontSize: '11px',
+    fontWeight: 700,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: 'var(--text-muted)',
+    marginBottom: '10px',
+  },
+  commandTitle: {
+    fontFamily: 'var(--font-head)',
+    fontSize: '18px',
+    lineHeight: 1.2,
+    margin: '0 0 8px',
+    color: 'var(--text)',
+  },
+  commandCopy: {
+    fontSize: '13px',
+    lineHeight: 1.6,
+    color: 'var(--text-muted)',
+    margin: 0,
+  },
+  commandFooter: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '14px 18px 18px',
+    borderTop: '1px solid #f1eef9',
+  },
+  commandValue: {
+    fontSize: '12px',
+    fontWeight: 700,
+    color: 'var(--primary)',
+  },
+  commandAction: {
+    fontSize: '12px',
+    fontWeight: 700,
+    color: 'var(--text)',
+  },
   genCard: {
     background: '#fff',
     border: '1px solid #eee',
