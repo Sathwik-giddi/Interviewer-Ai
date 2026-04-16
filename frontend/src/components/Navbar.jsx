@@ -16,7 +16,7 @@ const candidateLinks = [
 ]
 
 const publicSections = [
-  { id: 'why-canvue', label: 'Why Canvue' },
+  { id: 'why-canvue', label: 'Proof' },
   { id: 'workflow', label: 'How It Works' },
   { id: 'pricing', label: 'Pricing' },
   { id: 'faq', label: 'FAQ' },
@@ -67,7 +67,10 @@ export default function Navbar() {
           <span style={styles.logoIcon}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           </span>
-          CAN<span style={{ color: 'var(--primary)' }}>VUE</span>
+          CAN
+          <span style={{ color: isPublicLanding ? '#1f4fd1' : 'var(--primary)' }}>
+            VUE
+          </span>
         </Link>
         <button
           type="button"
@@ -172,7 +175,7 @@ const styles = {
     paddingBlock: '8px',
   },
   logo: {
-    fontFamily: 'var(--font-head)',
+    fontFamily: 'var(--font-body)',
     fontSize: '22px',
     letterSpacing: '0.08em',
     color: 'var(--text)',
@@ -217,12 +220,18 @@ const styles = {
   navBtnLandingPrimary: {
     padding: '10px 18px',
     borderRadius: '999px',
+    background: '#1f4fd1',
+    borderColor: '#1f4fd1',
+    color: '#ffffff',
+    boxShadow: 'none',
   },
   navBtnLandingSecondary: {
     padding: '10px 18px',
     borderRadius: '999px',
     background: '#ffffff',
     borderColor: '#dbe1ea',
+    color: '#171717',
+    boxShadow: 'none',
   },
   publicLink: {
     padding: '9px 12px',
