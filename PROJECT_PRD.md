@@ -718,9 +718,6 @@ frontend/
   src/lib/                Runtime config, socket auth, WebRTC config
   src/utils/              API payload safety utility
   public/models/          face-api model files
-
-ai-video-interviewer/
-  Original Flask/static prototype preserved for reference.
 ```
 
 ## 24. Final Product Assessment
