@@ -6,6 +6,7 @@ import React, { useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
 import { apiUrl } from '../lib/runtimeConfig'
+import { safeFetch } from '../utils/api'
 
 export default function ATSReport() {
   const { currentUser } = useAuth()
@@ -28,7 +29,7 @@ export default function ATSReport() {
     fd.append('required_skills', reqSkills)
 
     try {
-      const res = await fetch(apiUrl('/api/ats/score'), { method: 'POST', body: fd })
+      const res = await safeFetch(apiUrl('/api/ats/score'), { method: 'POST', body: fd }, { skipValidation: true })
       if (res.ok) {
         const data = await res.json()
         setReport(data)

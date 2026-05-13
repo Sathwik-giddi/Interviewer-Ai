@@ -23,13 +23,29 @@ import secrets
 import datetime
 import tempfile
 import traceback
+from functools import wraps
+from types import SimpleNamespace
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 from gtts import gTTS
 import google.generativeai as genai
 import speech_recognition as sr
+
+try:
+    import firebase_admin
+    from firebase_admin import auth as firebase_auth
+except Exception:
+    firebase_admin = None
+    firebase_auth = None
+
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+except Exception:
+    Limiter = None
+    get_remote_address = None
 
 load_dotenv()
 
@@ -43,8 +59,36 @@ else:
     print("⚠️  GEMINI_API_KEY not set — AI features will use fallback stubs.")
 
 # ── Flask ───────────────────────────────────────────────────────────────────
+MAX_PAYLOAD_MB = int(os.getenv('MAX_PAYLOAD_SIZE_MB', '10'))
 app = Flask(__name__, static_folder='static')
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+app.config['MAX_CONTENT_LENGTH'] = MAX_PAYLOAD_MB * 1024 * 1024  # Flask payload size limit
+DEFAULT_CORS_ORIGINS = ['http://localhost:5173', 'http://localhost:5174']
+CORS_ORIGINS = [
+    origin.strip().rstrip('/')
+    for origin in os.getenv('CORS_ORIGINS', ','.join(DEFAULT_CORS_ORIGINS)).split(',')
+    if origin.strip()
+]
+CORS(app, resources={r"/api/*": {"origins": CORS_ORIGINS}})
+if Limiter:
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=[],
+        storage_uri=os.getenv('RATELIMIT_STORAGE_URI', 'memory://'),
+    )
+else:
+    limiter = None
+print(f"[Flask] Max payload size: {MAX_PAYLOAD_MB} MB")
+print(f"[Flask] CORS origins: {', '.join(CORS_ORIGINS)}")
+
+# ── 413 Payload Too Large error handler ────────────────────────────────────
+@app.errorhandler(413)
+def payload_too_large(error):
+    return jsonify({
+        'error': 'Payload too large',
+        'message': f'Request body exceeds the {MAX_PAYLOAD_MB} MB limit. Please reduce the size of your input data (e.g., trim logs, shorten error reports, or split into multiple requests).',
+        'maxSizeMB': MAX_PAYLOAD_MB,
+    }), 413
 
 AUDIO_DIR = os.path.join(app.static_folder or 'static', 'audio')
 os.makedirs(AUDIO_DIR, exist_ok=True)
@@ -54,6 +98,107 @@ _sessions_store: dict = {}      # session_id → evaluation data
 _question_pools: dict = {}      # campaign_id → list of questions
 _violation_logs: dict = {}      # session_id → list of violations
 _links_store: dict = {}         # link_id → link data (email link tracking)
+
+def log_error(event: str, error: Exception | str, **fields):
+    payload = {
+        'level': 'error',
+        'event': event,
+        'error': str(error),
+        **fields,
+    }
+    print(json.dumps(payload, default=str))
+
+
+def require_firebase_auth(*allowed_roles):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            auth_header = request.headers.get('Authorization', '')
+            if not auth_header.startswith('Bearer '):
+                return jsonify({'error': 'Authentication required'}), 401
+            if firebase_auth is None:
+                return jsonify({'error': 'Firebase auth is not available'}), 503
+            token = auth_header[7:].strip()
+            try:
+                decoded = firebase_auth.verify_id_token(token)
+            except Exception as err:
+                log_error('auth.verify_failed', err, path=request.path)
+                return jsonify({'error': 'Invalid authentication token'}), 401
+
+            role = decoded.get('role')
+            uid = decoded.get('uid')
+            email = decoded.get('email')
+            is_anonymous = decoded.get('firebase', {}).get('sign_in_provider') == 'anonymous'
+            if not role and uid:
+                try:
+                    from firebase_service import get_db
+                    snap = get_db().collection('users').document(uid).get()
+                    if snap.exists:
+                        data = snap.to_dict() or {}
+                        role = data.get('role')
+                        email = email or data.get('email')
+                except Exception as err:
+                    log_error('auth.role_lookup_failed', err, uid=uid, path=request.path)
+            if not role and is_anonymous:
+                role = 'candidate'
+            if allowed_roles and role not in allowed_roles:
+                return jsonify({'error': 'Forbidden'}), 403
+            request.user = SimpleNamespace(uid=uid, email=email, role=role, claims=decoded)
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def parse_json_body():
+    return request.get_json(silent=True) or {}
+
+
+def safe_int(value, default=0, minimum=None, maximum=None):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    if minimum is not None:
+        parsed = max(minimum, parsed)
+    if maximum is not None:
+        parsed = min(maximum, parsed)
+    return parsed
+
+
+def rate_limit(rule):
+    def decorator(fn):
+        if limiter is None:
+            return fn
+        return limiter.limit(rule)(fn)
+    return decorator
+
+
+def validate_upload(file_storage, allowed_exts, max_mb=5):
+    if not file_storage or not file_storage.filename:
+        raise ValueError('File is required')
+    filename = file_storage.filename.lower()
+    if not any(filename.endswith(ext) for ext in allowed_exts):
+        raise ValueError(f'Unsupported file type. Allowed: {", ".join(allowed_exts)}')
+    file_storage.stream.seek(0, os.SEEK_END)
+    size = file_storage.stream.tell()
+    file_storage.stream.seek(0)
+    if size > max_mb * 1024 * 1024:
+        raise ValueError(f'File exceeds {max_mb} MB limit')
+    return filename
+
+
+def send_temp_audio_file(path: str, download_name: str):
+    response = send_file(path, mimetype='audio/mpeg', download_name=download_name)
+
+    @response.call_on_close
+    def cleanup():
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception as err:
+            log_error('tts.cleanup_failed', err, file=path)
+
+    return response
 
 # ── Email Service ──────────────────────────────────────────────────────────
 from email_service import send_email, build_interview_email
@@ -214,6 +359,24 @@ def build_session_context(room_id: str, explicit_campaign_id: str = ''):
     }
 
 
+def validate_link_token_for_room(token: str, room_id: str = '', session_id: str = ''):
+    if not token:
+        return None
+    try:
+        return lookup_candidate_by_token(token, expected_room_id=room_id, expected_session_id=session_id)
+    except Exception as err:
+        raise ValueError(str(err))
+
+
+def enforce_candidate_token(data: dict):
+    token = (data.get('link_token') or data.get('candidate_token') or '').strip()
+    if not token:
+        return None
+    room_id = (data.get('room_id') or '').strip()
+    session_id = (data.get('session_id') or '').strip()
+    return validate_link_token_for_room(token, room_id=room_id, session_id=session_id)
+
+
 # ── Skill list for resume parsing ───────────────────────────────────────────
 TECH_SKILLS = [
     "python","javascript","typescript","java","c++","c#","go","rust","ruby","php","swift","kotlin",
@@ -264,9 +427,11 @@ def select_by_difficulty(pool: list, score: int, n: int = 5) -> list:
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route('/api/generate-question-pool', methods=['POST'])
+@require_firebase_auth('hr')
+@rate_limit('20 per minute')
 def generate_question_pool():
     """Generate 20 interview questions — tries dataset first, supplements with Gemini."""
-    data = request.json or {}
+    data = parse_json_body()
     job_title    = data.get('job_title', 'Software Engineer')
     job_desc     = data.get('job_description', '')
     skills       = data.get('required_skills', '')
@@ -337,11 +502,13 @@ Return ONLY a valid JSON array (no markdown, no extra text):
 
 
 @app.route('/api/select-questions', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('60 per minute')
 def select_questions():
     """Return 5 questions — tries dataset first, then Gemini, then Firestore pool."""
-    data        = request.json or {}
+    data        = parse_json_body()
     campaign_id = data.get('campaign_id', '')
-    match_score = int(data.get('match_score', 50))
+    match_score = safe_int(data.get('match_score', 50), default=50, minimum=0, maximum=100)
     pool        = data.get('pool', [])
     job_title   = data.get('job_title', '')
     job_desc    = data.get('job_description', '')
@@ -425,9 +592,11 @@ Return ONLY a valid JSON array:
 
 
 @app.route('/api/evaluate-answer-ai', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('60 per minute')
 def evaluate_answer_ai():
     """Score a single answer 1–10 with feedback."""
-    data         = request.json or {}
+    data         = parse_json_body()
     question     = data.get('question', '')
     answer       = data.get('answer', '')
     model_answer = data.get('model_answer', '')
@@ -462,9 +631,11 @@ Return ONLY valid JSON:
 
 
 @app.route('/api/generate-evaluation', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('20 per minute')
 def generate_evaluation():
     """Generate a full session evaluation report."""
-    data       = request.json or {}
+    data       = parse_json_body()
     session_id = data.get('session_id', '')
     answers    = data.get('answers', [])
     room_id    = data.get('room_id', '')
@@ -472,6 +643,11 @@ def generate_evaluation():
     link_id    = data.get('link_id', '')
     context    = build_session_context(room_id, data.get('campaign_id', ''))
     violations = data.get('violations', []) or _violation_logs.get(session_id, [])
+    if link_token:
+        try:
+            validate_link_token_for_room(link_token, room_id=room_id, session_id=session_id)
+        except ValueError as err:
+            return jsonify({'error': str(err)}), 403
 
     q_evals = {}
     if session_id and session_id in _sessions_store:
@@ -611,9 +787,11 @@ Write a concise professional evaluation report. Return ONLY valid JSON:
 
 
 @app.route('/api/interview/start', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('30 per minute')
 def start_interview():
     """Create or update a session record when an interview begins."""
-    data = request.json or {}
+    data = parse_json_body()
     session_id = data.get('session_id', '').strip()
     room_id = data.get('room_id', '').strip()
     candidate_email = (data.get('candidate_email') or '').strip()
@@ -624,6 +802,10 @@ def start_interview():
 
     if not session_id or not room_id:
         return jsonify({'error': 'session_id and room_id are required'}), 400
+    try:
+        enforce_candidate_token(data)
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 403
 
     context = build_session_context(room_id, data.get('campaign_id', ''))
     session_doc = {
@@ -707,6 +889,8 @@ def start_interview():
 
 
 @app.route('/api/parse-resume', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('10 per minute')
 def parse_resume():
     """Accept PDF or DOCX, return skills, experience years, and match score."""
     if 'resume' not in request.files:
@@ -715,7 +899,10 @@ def parse_resume():
     file         = request.files['resume']
     job_desc     = request.form.get('job_description', '')
     req_skills   = request.form.get('required_skills', '')
-    filename     = file.filename.lower()
+    try:
+        filename = validate_upload(file, ('.pdf', '.docx', '.txt'), max_mb=5)
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
 
     text = ''
     tmp_path = None
@@ -727,6 +914,8 @@ def parse_resume():
         if filename.endswith('.pdf'):
             import pdfplumber
             with pdfplumber.open(tmp_path) as pdf:
+                if len(pdf.pages) > 15:
+                    return jsonify({'error': 'PDF exceeds 15 page limit'}), 400
                 text = '\n'.join(p.extract_text() or '' for p in pdf.pages)
         elif filename.endswith('.docx'):
             from docx import Document
@@ -748,22 +937,35 @@ def parse_resume():
 
 
 @app.route('/api/transcribe', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('20 per minute')
 def transcribe_audio():
     """Convert uploaded audio (webm/wav) to text via Google Speech Recognition."""
     if 'audio' not in request.files:
         return jsonify({'error': 'No audio file'}), 400
 
     audio_file = request.files['audio']
-    input_path = tempfile.mktemp(suffix='.webm')
-    wav_path   = tempfile.mktemp(suffix='.wav')
+    try:
+        validate_upload(audio_file, ('.webm', '.wav', '.ogg', '.mp4'), max_mb=10)
+    except ValueError as err:
+        return jsonify({'error': str(err), 'text': ''}), 400
+    input_path = None
+    wav_path = None
 
     try:
-        audio_file.save(input_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.filename.lower())[1] or '.webm') as tmp:
+            input_path = tmp.name
+            audio_file.save(input_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as wav_tmp:
+            wav_path = wav_tmp.name
 
         # Convert to WAV using pydub (requires ffmpeg)
         try:
             from pydub import AudioSegment
-            AudioSegment.from_file(input_path).export(wav_path, format='wav')
+            segment = AudioSegment.from_file(input_path)
+            if len(segment) > 180000:
+                return jsonify({'error': 'Audio exceeds 3 minute limit', 'text': ''}), 400
+            segment.export(wav_path, format='wav')
         except Exception:
             # If pydub/ffmpeg not available, try directly
             wav_path = input_path
@@ -777,7 +979,9 @@ def transcribe_audio():
     except Exception as e:
         return jsonify({'error': str(e), 'text': ''}), 200
     finally:
-        for p in [input_path, wav_path]:
+        for p in {input_path, wav_path}:
+            if not p:
+                continue
             try:
                 os.remove(p)
             except Exception:
@@ -787,9 +991,11 @@ def transcribe_audio():
 
 
 @app.route('/api/text-to-speech', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('30 per minute')
 def text_to_speech():
     """Convert text to MP3 and return a URL. Supports multilingual via Sarvam AI."""
-    data = request.json or {}
+    data = parse_json_body()
     text = data.get('text', '').strip()
     language = data.get('language', 'en-IN')
     gender = data.get('gender', 'female')
@@ -827,7 +1033,7 @@ def text_to_speech():
                     audio_bytes = base64.b64decode(audios[0])
                     with open(fpath, 'wb') as f:
                         f.write(audio_bytes)
-                    return jsonify({'audio_url': f'/static/audio/{fname}', 'engine': 'sarvam'})
+                    return send_temp_audio_file(fpath, fname)
         except Exception as e:
             print(f"[TTS] Sarvam AI failed: {e}")
 
@@ -835,17 +1041,19 @@ def text_to_speech():
     try:
         gtts_lang = 'hi' if language.startswith('hi') else 'te' if language.startswith('te') else 'en'
         gTTS(text=text, lang=gtts_lang, slow=False).save(fpath)
-        return jsonify({'audio_url': f'/static/audio/{fname}', 'engine': 'gtts'})
+        return send_temp_audio_file(fpath, fname)
     except Exception as e:
+        try:
+            if os.path.exists(fpath):
+                os.remove(fpath)
+        except Exception as err:
+            log_error('tts.cleanup_failed', err, file=fpath)
         return jsonify({'error': str(e), 'fallback': 'browser'}), 200
 
 
-@app.route('/static/audio/<path:filename>')
-def serve_audio(filename):
-    return send_from_directory(AUDIO_DIR, filename)
-
-
 @app.route('/api/ats/score', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('10 per minute')
 def ats_score():
     """ATS scoring endpoint — receives resume file + job description, returns score and feedback."""
     if 'resume' not in request.files:
@@ -854,7 +1062,10 @@ def ats_score():
     file         = request.files['resume']
     job_desc     = request.form.get('job_description', '')
     req_skills   = request.form.get('required_skills', '')
-    filename     = file.filename.lower()
+    try:
+        filename = validate_upload(file, ('.pdf', '.docx', '.txt'), max_mb=5)
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
 
     text = ''
     tmp_path = None
@@ -866,6 +1077,8 @@ def ats_score():
         if filename.endswith('.pdf'):
             import pdfplumber
             with pdfplumber.open(tmp_path) as pdf:
+                if len(pdf.pages) > 15:
+                    return jsonify({'error': 'PDF exceeds 15 page limit'}), 400
                 text = '\n'.join(p.extract_text() or '' for p in pdf.pages)
         elif filename.endswith('.docx'):
             from docx import Document
@@ -904,9 +1117,11 @@ Give 2-3 sentences of constructive feedback about this candidate's fit. Be speci
 
 
 @app.route('/api/auto-generate-campaign', methods=['POST'])
+@require_firebase_auth('hr')
+@rate_limit('10 per minute')
 def auto_generate_campaign():
     """Auto-generate a complete test campaign with job title, description, skills, and questions."""
-    data = request.json or {}
+    data = parse_json_body()
     role_type = data.get('role_type', 'fullstack')  # frontend, backend, fullstack, data, devops, mobile, qa
 
     role_templates = {
@@ -990,9 +1205,12 @@ Return ONLY a valid JSON array:
 
 
 @app.route('/api/candidate/history', methods=['GET'])
+@require_firebase_auth('candidate', 'hr')
 def candidate_history():
     """Return interview history for a candidate from Firestore or in-memory store."""
     candidate_id = request.args.get('candidate_id', '')
+    if request.user.role == 'candidate' and candidate_id != request.user.uid:
+        return jsonify({'error': 'Forbidden'}), 403
     if not candidate_id:
         return jsonify({'error': 'candidate_id required'}), 400
 
@@ -1015,9 +1233,12 @@ def candidate_history():
 
 
 @app.route('/api/candidate/analytics', methods=['GET'])
+@require_firebase_auth('candidate', 'hr')
 def candidate_analytics():
     """Return analytics summary for a candidate."""
     candidate_id = request.args.get('candidate_id', '')
+    if request.user.role == 'candidate' and candidate_id != request.user.uid:
+        return jsonify({'error': 'Forbidden'}), 403
     if not candidate_id:
         return jsonify({'error': 'candidate_id required'}), 400
 
@@ -1050,6 +1271,7 @@ def candidate_analytics():
 
 
 @app.route('/api/hr/candidates', methods=['GET'])
+@require_firebase_auth('hr')
 def hr_candidates():
     """Return all candidates from Firestore (HR view)."""
     candidates = []
@@ -1070,6 +1292,7 @@ def hr_candidates():
 
 
 @app.route('/api/hr/analytics', methods=['GET'])
+@require_firebase_auth('hr')
 def hr_analytics():
     """Return analytics summary for HR dashboard."""
     sessions = []
@@ -1124,7 +1347,7 @@ def test_question_selection():
     role = request.args.get('role', 'Software Engineer')
     description = request.args.get('description', '')
     difficulty = request.args.get('difficulty', '')
-    num = min(int(request.args.get('num', 5)), 20)
+    num = safe_int(request.args.get('num', 5), default=5, minimum=1, maximum=20)
 
     if not _dataset:
         return jsonify({'error': 'Dataset not loaded', 'questions': []}), 200
@@ -1155,9 +1378,11 @@ def dataset_stats():
 # ── Violation Logging ──────────────────────────────────────────────────────
 
 @app.route('/api/interview/violation', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('60 per minute')
 def log_violation():
     """Log a proctoring violation for a session."""
-    data = request.json or {}
+    data = parse_json_body()
     session_id = data.get('session_id', '')
     violation = {
         'type': data.get('type', 'unknown'),
@@ -1185,6 +1410,7 @@ def log_violation():
 
 
 @app.route('/api/interview/report/<session_id>', methods=['GET'])
+@require_firebase_auth('candidate', 'hr')
 def get_interview_report(session_id):
     """Get comprehensive interview report for a session."""
     report = {}
@@ -1254,6 +1480,8 @@ def get_interview_report(session_id):
 
 
 @app.route('/api/candidate/lookup', methods=['GET'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('30 per minute')
 def candidate_lookup():
     token = (request.args.get('token') or '').strip()
     if not token:
@@ -1286,9 +1514,12 @@ def candidate_lookup():
 
 
 @app.route('/api/candidate/progress', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('60 per minute')
 def candidate_progress():
-    data = request.json or {}
+    data = parse_json_body()
     try:
+        enforce_candidate_token(data)
         saved = upsert_candidate_progress(data)
         return jsonify({
             'ok': True,
@@ -1305,8 +1536,14 @@ def candidate_progress():
 
 
 @app.route('/api/candidate/actions', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('120 per minute')
 def candidate_actions():
-    data = request.json or {}
+    data = parse_json_body()
+    try:
+        enforce_candidate_token(data)
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 403
     actions = data.get('actions') if isinstance(data, dict) else None
     if not isinstance(actions, list) or not actions:
         return jsonify({'error': 'actions must be a non-empty list'}), 400
@@ -1320,7 +1557,10 @@ def candidate_actions():
 
 
 @app.route('/api/report/<candidate_id>', methods=['GET'])
+@require_firebase_auth('candidate', 'hr')
 def get_candidate_report(candidate_id):
+    if request.user.role == 'candidate' and candidate_id != request.user.uid:
+        return jsonify({'error': 'Forbidden'}), 403
     session_id = (request.args.get('session_id') or '').strip()
     output_format = (request.args.get('format') or 'json').strip().lower()
 
@@ -1377,6 +1617,8 @@ def _stub_questions(role, n):
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.route('/api/generate-link', methods=['POST'])
+@require_firebase_auth('candidate', 'hr')
+@rate_limit('20 per minute')
 def generate_link():
     """
     Generate a unique interview/mock link and optionally send it by email.
@@ -1395,10 +1637,10 @@ def generate_link():
       { success, link, linkId, emailSent }
     """
     try:
-        data = request.json or {}
+        data = parse_json_body()
         link_type = data.get('type', 'interview')
         role = data.get('role', 'candidate')
-        user_id = data.get('userId', '')
+        user_id = request.user.uid
         email = data.get('email', '').strip()
         candidate_name = data.get('candidateName', '').strip()
         candidate_phone = data.get('candidatePhone', '').strip()
@@ -1488,7 +1730,6 @@ def generate_link():
             "link": full_link,
             "linkId": link_id,
             "roomId": link_data.get("roomId"),
-            "candidateToken": candidate_token,
             "emailSent": email_result.get("sent", False),
             "emailMethod": email_result.get("method", "none"),
             "emailError": email_error,
@@ -1504,6 +1745,7 @@ def generate_link():
 
 
 @app.route('/api/links', methods=['GET'])
+@require_firebase_auth('candidate', 'hr')
 def get_links():
     """
     Get all links created by a specific user.
@@ -1519,6 +1761,8 @@ def get_links():
         user_id = request.args.get('userId', '')
         if not user_id:
             return jsonify({"error": "userId is required"}), 400
+        if request.user.role != 'hr' and user_id != request.user.uid:
+            return jsonify({'error': 'Forbidden'}), 403
 
         links = []
 
@@ -1530,6 +1774,7 @@ def get_links():
                        .order_by('createdAt', direction='DESCENDING').stream()
             for doc in docs:
                 d = doc.to_dict()
+                d.pop('candidateToken', None)
                 links.append(d)
         except Exception:
             pass
@@ -1538,7 +1783,9 @@ def get_links():
         seen_ids = {l['linkId'] for l in links}
         for lid, ldata in _links_store.items():
             if ldata.get('createdBy') == user_id and lid not in seen_ids:
-                links.append(ldata)
+                sanitized = {**ldata}
+                sanitized.pop('candidateToken', None)
+                links.append(sanitized)
 
         # Sort by creation date, newest first
         links.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
@@ -1551,6 +1798,7 @@ def get_links():
 
 
 @app.route('/api/link/<link_id>', methods=['GET'])
+@require_firebase_auth('candidate', 'hr')
 def get_link(link_id):
     """
     Validate and return a link by its ID.
@@ -1599,7 +1847,6 @@ def get_link(link_id):
                 "fullLink": link_data.get("fullLink"),
                 "jobTitle": link_data.get("jobTitle"),
                 "campaignId": link_data.get("campaignId"),
-                "candidateToken": link_data.get("candidateToken"),
                 "used": True,
             }
         })
@@ -1611,7 +1858,10 @@ def get_link(link_id):
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', '5001'))
-    debug = os.environ.get('FLASK_DEBUG', '1') == '1'
+    debug = os.environ.get('FLASK_ENV') == 'development' and os.environ.get('FLASK_DEBUG', '0') == '1'
+    host = os.environ.get('FLASK_RUN_HOST', '127.0.0.1')
+    if os.environ.get('FLASK_ENV') != 'development' and host == '0.0.0.0' and os.environ.get('ALLOW_PUBLIC_BIND') != '1':
+        host = '127.0.0.1'
     print(f"🚀 Starting AI Interviewer Flask backend on port {port}…")
     print(f"   Gemini AI: {'✅ enabled' if GEMINI_KEY else '⚠️  disabled (set GEMINI_API_KEY)'}")
-    app.run(debug=debug, host='0.0.0.0', port=port)
+    app.run(debug=debug, host=host, port=port)

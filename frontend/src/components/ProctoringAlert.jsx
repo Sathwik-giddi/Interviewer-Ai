@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react'
+import { safeFetch } from '../utils/api'
 
 const MAX_VIOLATIONS = 5
 
@@ -37,7 +38,7 @@ export default function ProctoringAlert({
 
   const logViolation = useCallback((type, details) => {
     if (!sessionId || !backendUrl) return
-    fetch(`${backendUrl}/api/interview/violation`, {
+    safeFetch(`${backendUrl}/api/interview/violation`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

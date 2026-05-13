@@ -2,13 +2,12 @@
  * WebRTC Configuration - TURN/STUN Server Setup
  * 
  * This module handles ICE server configuration for WebRTC connections.
- * It fetches TURN credentials from the backend API (which securely
+ * It fetches TURN credentials from the signaling API (which securely
  * communicates with Metered.ca) rather than exposing API keys in the frontend.
  */
 
-import { getBackendBaseUrl } from './runtimeConfig'
-import { auth } from '../firebase'
-import { getIdToken } from 'firebase/auth'
+import { getAuth } from 'firebase/auth'
+import { getSocketServerUrl } from './runtimeConfig'
 
 function splitCsv(value = '') {
   return String(value)
@@ -47,28 +46,67 @@ let dynamicTurnCache = {
 // Cooldown period between failed fetch attempts (5 minutes)
 const FETCH_COOLDOWN_MS = 5 * 60 * 1000
 
+function resetDynamicTurnCache() {
+  dynamicTurnCache = {
+    iceServers: null,
+    expiresAt: 0,
+    loading: false,
+    error: null,
+    lastFetchAttempt: 0,
+  }
+}
+
+function hasRelayServer(iceServers = []) {
+  return iceServers.some(server => {
+    const urls = Array.isArray(server?.urls) ? server.urls : [server?.urls]
+    return urls.some(url => /^turns?:/i.test(String(url || '')))
+  })
+}
+
+function warnIfNoRelay(iceServers, source) {
+  if (!hasRelayServer(iceServers)) {
+    console.warn(`[TURN] ${source} produced STUN-only ICE config. Cross-network WebRTC will be unreliable.`)
+  }
+}
+
 /**
- * Fetch TURN credentials from the backend API
- * The backend securely communicates with Metered.ca using the API key
+ * Get a fresh Firebase ID token, forcing refresh.
+ * Throws if no authenticated user (caller must handle).
+ */
+async function getFirebaseToken() {
+  const { currentUser } = getAuth()
+  if (!currentUser) {
+    throw new Error('No authenticated user — cannot fetch TURN credentials')
+  }
+  // Force token refresh to avoid expired cached tokens
+  const token = await currentUser.getIdToken(true)
+  if (!token) {
+    throw new Error('Firebase ID token is null — cannot fetch TURN credentials')
+  }
+  return token
+}
+
+/**
+ * Fetch TURN credentials from the signaling API
+ * The signaling server securely communicates with Metered.ca using the API key
  * @returns {Promise<Array>} Array of ICE server objects
  */
 async function fetchTurnCredentialsFromBackend() {
-  const backendUrl = getBackendBaseUrl()
-  if (!backendUrl) {
-    throw new Error('Backend URL not configured')
+  const signalingUrl = getSocketServerUrl()
+  if (!signalingUrl) {
+    throw new Error('Signaling URL not configured')
   }
 
-  let authHeaders = { 'Content-Type': 'application/json' }
-  try {
-    if (auth.currentUser) {
-      const token = await getIdToken(auth.currentUser)
-      if (token) authHeaders['Authorization'] = `Bearer ${token}`
-    }
-  } catch {}
+  // Get a fresh token — throws if user not authenticated
+  const token = await getFirebaseToken()
+  console.log('[TURN] Fetched Firebase token, fetching ICE servers from signaling server...')
 
-  const response = await fetch(`${backendUrl}/api/turn-credentials`, {
+  const response = await fetch(`${signalingUrl}/api/turn-credentials`, {
     method: 'GET',
-    headers: authHeaders,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
   })
 
   if (!response.ok) {
@@ -85,11 +123,16 @@ async function fetchTurnCredentialsFromBackend() {
  * Tries backend first, falls back to OpenRelay if unavailable
  * @returns {Promise<Array>} Array of ICE server objects
  */
-export async function getDynamicTurnCredentials() {
+export async function getDynamicTurnCredentials({ forceRefresh = false } = {}) {
   const now = Date.now()
+
+  if (forceRefresh && !dynamicTurnCache.loading) {
+    resetDynamicTurnCache()
+  }
 
   // Return cached credentials if still valid
   if (
+    !forceRefresh &&
     dynamicTurnCache.iceServers &&
     dynamicTurnCache.expiresAt > now
   ) {
@@ -111,6 +154,7 @@ export async function getDynamicTurnCredentials() {
 
   // Check cooldown period after failed attempt
   if (
+    !forceRefresh &&
     dynamicTurnCache.error &&
     now - dynamicTurnCache.lastFetchAttempt < FETCH_COOLDOWN_MS
   ) {
@@ -126,6 +170,10 @@ export async function getDynamicTurnCredentials() {
     console.log('[TURN] Fetching credentials from backend...')
     const iceServers = await fetchTurnCredentialsFromBackend()
 
+    if (!Array.isArray(iceServers) || iceServers.length === 0) {
+      throw new Error('Backend returned empty or invalid ICE servers')
+    }
+
     // Cache with 23-hour TTL (credentials expire at 24 hours)
     dynamicTurnCache = {
       iceServers,
@@ -136,6 +184,7 @@ export async function getDynamicTurnCredentials() {
     }
 
     console.log('[TURN] Successfully fetched and cached credentials from backend')
+    warnIfNoRelay(iceServers, 'Dynamic TURN fetch')
     return iceServers
   } catch (error) {
     console.error('[TURN] Failed to fetch from backend:', error.message)
@@ -149,7 +198,9 @@ export async function getDynamicTurnCredentials() {
 
     // Fallback to OpenRelay
     console.warn('[TURN] Using fallback OpenRelay credentials')
-    return getFallbackIceServers()
+    const fallback = getFallbackIceServers()
+    warnIfNoRelay(fallback, 'Fallback TURN config')
+    return fallback
   }
 }
 
@@ -220,11 +271,14 @@ export async function getIceServersAsync() {
   // Try dynamic credentials first
   const dynamicServers = await getDynamicTurnCredentials()
   if (dynamicServers) {
+    warnIfNoRelay(dynamicServers, 'Async ICE config')
     return dynamicServers
   }
 
   // Fallback to static config
-  return getIceServers()
+  const fallback = getIceServers()
+  warnIfNoRelay(fallback, 'Static ICE config')
+  return fallback
 }
 
 /**
@@ -255,7 +309,47 @@ export function getIceServers() {
     })
   }
 
+  warnIfNoRelay(servers, 'Synchronous ICE config')
   return servers
+}
+
+/**
+ * Periodically refresh TURN credentials and notify callers with the latest ICE servers.
+ * @param {number|Function} intervalMs refresh interval, or callback when omitted
+ * @param {Function} onRefresh callback receiving the refreshed ICE server list
+ * @returns {Function} stop watcher cleanup function
+ */
+export function watchTurnCredentials(intervalMs = 60000, onRefresh = () => {}) {
+  let interval = intervalMs
+  let callback = onRefresh
+
+  if (typeof intervalMs === 'function') {
+    callback = intervalMs
+    interval = 60000
+  }
+
+  const safeInterval = Math.max(Number(interval) || 60000, 15000)
+  let stopped = false
+  let timerId = null
+
+  async function refresh() {
+    try {
+      const iceServers = await getDynamicTurnCredentials({ forceRefresh: true })
+      if (!stopped && typeof callback === 'function') {
+        callback(iceServers)
+      }
+    } catch (error) {
+      console.warn('[TURN] Credential watcher refresh failed:', error.message)
+    }
+  }
+
+  refresh()
+  timerId = setInterval(refresh, safeInterval)
+
+  return () => {
+    stopped = true
+    if (timerId) clearInterval(timerId)
+  }
 }
 
 /**
@@ -276,18 +370,30 @@ export function buildRtcConfig({ forceRelay = false } = {}) {
 
 /**
  * Build RTC configuration asynchronously (fetches from backend)
+ * This MUST be called and awaited before creating RTCPeerConnection
+ * to ensure TURN servers are included in the config.
  * @param {Object} options
  * @param {boolean} options.forceRelay - Force TURN relay usage
  * @returns {Promise<Object>} RTCConfiguration object
  */
 export async function buildRtcConfigAsync({ forceRelay = false } = {}) {
-  const iceServers = await getIceServersAsync()
-  return {
-    iceServers,
-    iceTransportPolicy: forceRelay ? 'relay' : 'all',
-    bundlePolicy: 'max-bundle',
-    rtcpMuxPolicy: 'require',
-    iceCandidatePoolSize: forceRelay ? 0 : 8,
+  try {
+    const iceServers = await getIceServersAsync()
+    console.log('[TURN] buildRtcConfigAsync: using', iceServers.length, 'ICE server groups, forceRelay=', forceRelay)
+    warnIfNoRelay(iceServers, 'buildRtcConfigAsync')
+    return {
+      iceServers,
+      iceTransportPolicy: forceRelay ? 'relay' : 'all',
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+      iceCandidatePoolSize: forceRelay ? 0 : 8,
+    }
+  } catch (err) {
+    console.error('[TURN] buildRtcConfigAsync failed, using fallback:', err.message)
+    // Return fallback config so callers can still create a peer connection
+    const fallbackConfig = buildRtcConfig({ forceRelay })
+    warnIfNoRelay(fallbackConfig.iceServers, 'buildRtcConfigAsync fallback')
+    return fallbackConfig
   }
 }
 
@@ -351,24 +457,22 @@ export async function getSelectedCandidatePairInfo(pc) {
  * @returns {Promise<void>}
  */
 export async function refreshTurnCredentials() {
-  const backendUrl = getBackendBaseUrl()
-  if (!backendUrl) return
+  const signalingUrl = getSocketServerUrl()
+  if (!signalingUrl) return
 
   try {
-    const response = await fetch(`${backendUrl}/api/turn-credentials/refresh`, {
+    const token = await getFirebaseToken().catch(() => null)
+    const headers = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
+    const response = await fetch(`${signalingUrl}/api/turn-credentials/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
     })
 
     if (response.ok) {
       // Clear local cache to force re-fetch
-      dynamicTurnCache = {
-        iceServers: null,
-        expiresAt: 0,
-        loading: false,
-        error: null,
-        lastFetchAttempt: 0,
-      }
+      resetDynamicTurnCache()
       console.log('[TURN] Credentials refreshed successfully')
     }
   } catch (error) {

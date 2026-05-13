@@ -20,7 +20,7 @@ backend/serviceAccount.json
 serviceAccount.json
 
 # Node
-node_modules/
+**/node_modules/
 .npm/
 *.log
 npm-debug.log*
@@ -53,3 +53,8 @@ temp_*
 backend/.env
 server/.env
 frontend/.env
+
+claude-skills/
+.codex/
+.kilo/
+.env

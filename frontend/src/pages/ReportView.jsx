@@ -6,6 +6,7 @@ import { useToast } from '../components/Toast'
 import jsPDF from 'jspdf'
 import 'jspdf-autotable'
 import { apiUrl } from '../lib/runtimeConfig'
+import { authFetch } from '../utils/api'
 
 export default function ReportView() {
   const { sessionId } = useParams()
@@ -27,7 +28,7 @@ export default function ReportView() {
 
       // Fallback: backend API
       try {
-        const res = await fetch(apiUrl(`/api/interview/report/${sessionId}`))
+        const res = await authFetch(apiUrl(`/api/interview/report/${sessionId}`))
         if (res.ok) {
           const data = await res.json()
           setSession({ id: sessionId, ...data })
@@ -193,7 +194,7 @@ export default function ReportView() {
       return
     }
     try {
-      const res = await fetch(apiUrl(`/api/report/${reportCandidateId}?session_id=${encodeURIComponent(sessionId)}&format=txt`))
+      const res = await authFetch(apiUrl(`/api/report/${reportCandidateId}?session_id=${encodeURIComponent(sessionId)}&format=txt`))
       if (!res.ok) throw new Error('Failed to export text report')
       const text = await res.text()
       const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })

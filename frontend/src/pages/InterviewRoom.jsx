@@ -9,14 +9,30 @@ import ProctoringAlert from '../components/ProctoringAlert'
 import { useToast } from '../components/Toast'
 import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
 import { getSocketAuth } from '../lib/socketAuth'
-import { buildRtcConfigAsync } from '../lib/webrtcConfig'
-import { getSelectedCandidatePairInfo, hasTurnConfig } from '../lib/webrtcConfig'
+import {
+  buildRtcConfigAsync,
+  getFallbackIceServers,
+  getSelectedCandidatePairInfo,
+  hasTurnConfig,
+  refreshTurnCredentials,
+  watchTurnCredentials,
+} from '../lib/webrtcConfig'
+import { authFetch, safeFetch } from '../utils/api'
 
 const BACKEND = getBackendBaseUrl()
 const SIGNAL  = getSocketServerUrl()
 
 function createDraftSessionId() {
   return `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function isValidIceCandidate(candidate) {
+  return Boolean(
+    candidate &&
+    typeof candidate === 'object' &&
+    ('candidate' in candidate) &&
+    (typeof candidate.candidate === 'string' || candidate.candidate === null)
+  )
 }
 
 export default function InterviewRoom() {
@@ -26,9 +42,8 @@ export default function InterviewRoom() {
   const location = useLocation()
   const toast = useToast()
 
-  // Guest mode — works without Firebase auth
-  const guestId = useRef(`guest-${Math.random().toString(36).slice(2, 10)}`)
-  const userId  = currentUser?.uid || guestId.current
+  const [socketUid, setSocketUid] = useState(currentUser?.uid || '')
+  const userId = socketUid || currentUser?.uid || ''
 
   // ── State ──
   const [phase, setPhase]               = useState('setup')
@@ -76,27 +91,39 @@ export default function InterviewRoom() {
   const [currentMood, setCurrentMood]     = useState(null)
   const [detectedObjects, setDetectedObjects] = useState([])
   const [procModal, setProcModal]         = useState(null)   // { title, message, severity }
-  const [tabSwitchCount, setTabSwitchCount] = useState(0)
+  const tabSwitchCountRef = useRef(0)
   const beepCtxRef = useRef(null)
 
   // Voice settings
   const [voiceLang, setVoiceLang] = useState('en-IN')
   const [voiceGender, setVoiceGender] = useState('female')
-  const [interviewDisqualified, setInterviewDisqualified] = useState(false)
 
   // Refs for stable access in async functions (avoid stale closures)
   const voiceLangRef = useRef(voiceLang)
   const voiceGenderRef = useRef(voiceGender)
   const answersRef = useRef(answers)
+  const questionsRef = useRef(questions)
   const sessionIdRef = useRef(sessionId)
   const candidateIdRef = useRef(candidateId)
   const phaseRef = useRef(phase)
   const qIndexRef = useRef(qIndex)
   const questionDurationsRef = useRef(questionDurations)
+  const pagesVisitedRef = useRef(pagesVisited)
+  const sessionStartedAtRef = useRef(sessionStartedAt)
+  const linkTokenRef = useRef(linkToken)
+  const socketUidRef = useRef(socketUid)
+  const isMountedRef = useRef(false)
   const currentQuestionStartedAtRef = useRef(null)
   const actionQueueRef = useRef([])
   const actionFlushTimerRef = useRef(null)
   const progressFlushTimerRef = useRef(null)
+  const intervalPersistTimerRef = useRef(null)
+  const dialogueScrollTimerRef = useRef(null)
+  const autoRecordTimerRef = useRef(null)
+  const proctoringTimerRef = useRef(null)
+  const proctoringInFlightRef = useRef(false)
+  const proctoringAlertDedupeRef = useRef({})
+  const recorderOwnedStreamsRef = useRef(new Set())
   const fieldSnapshotRef = useRef({
     candidateName: '',
     candidateEmail: currentUser?.email || '',
@@ -110,11 +137,16 @@ export default function InterviewRoom() {
   useEffect(() => { voiceLangRef.current = voiceLang }, [voiceLang])
   useEffect(() => { voiceGenderRef.current = voiceGender }, [voiceGender])
   useEffect(() => { answersRef.current = answers }, [answers])
+  useEffect(() => { questionsRef.current = questions }, [questions])
   useEffect(() => { sessionIdRef.current = sessionId }, [sessionId])
   useEffect(() => { candidateIdRef.current = candidateId }, [candidateId])
   useEffect(() => { phaseRef.current = phase }, [phase])
   useEffect(() => { qIndexRef.current = qIndex }, [qIndex])
   useEffect(() => { questionDurationsRef.current = questionDurations }, [questionDurations])
+  useEffect(() => { pagesVisitedRef.current = pagesVisited }, [pagesVisited])
+  useEffect(() => { sessionStartedAtRef.current = sessionStartedAt }, [sessionStartedAt])
+  useEffect(() => { linkTokenRef.current = linkToken }, [linkToken])
+  useEffect(() => { socketUidRef.current = socketUid }, [socketUid])
   const candidateNameRef = useRef('')
   const candidateEmailRef = useRef('')
   const candidatePhoneRef = useRef('')
@@ -152,6 +184,9 @@ export default function InterviewRoom() {
   // Room lock
   const [roomLocked, setRoomLocked] = useState(false)
 
+  // WebRTC error state (Error 13 fix)
+  const [webrtcError, setWebrtcError] = useState(null)
+
   // Dialogue history (scrollable Q&A transcript)
   const [dialogue, setDialogue] = useState([])
   const dialogueEndRef = useRef(null)
@@ -174,12 +209,120 @@ export default function InterviewRoom() {
   const remotePeerIdRef  = useRef(null)
   const relayFallbackAttemptedRef = useRef(false)
   const activeRelayModeRef = useRef(false)
+  const sendStreamRetryRef = useRef(null)
+  const turnWatcherStopRef = useRef(null)
+  const iceRestartTimerRef = useRef(null)
+  const socketAuthRetryingRef = useRef(false)
+  const socketAuthRetryTimerRef = useRef(null)
+
+  function registerTimeout(ref, callback, delay) {
+    if (ref.current) clearTimeout(ref.current)
+    ref.current = setTimeout(() => {
+      ref.current = null
+      callback()
+    }, delay)
+  }
+
+  function clearAllTimers() {
+    [
+      actionFlushTimerRef,
+      progressFlushTimerRef,
+      intervalPersistTimerRef,
+      dialogueScrollTimerRef,
+      autoRecordTimerRef,
+      proctoringTimerRef,
+      sendStreamRetryRef,
+      iceRestartTimerRef,
+      socketAuthRetryTimerRef,
+    ].forEach(ref => {
+      if (ref === intervalPersistTimerRef && ref.current) clearInterval(ref.current)
+      else if (ref.current) clearTimeout(ref.current)
+      ref.current = null
+    })
+    if (timerRef.current) clearInterval(timerRef.current)
+    timerRef.current = null
+    if (faceIntervalRef.current) clearInterval(faceIntervalRef.current)
+    faceIntervalRef.current = null
+  }
+
+  function stopAllMedia() {
+    localStreamRef.current?.getTracks().forEach(t => t.stop())
+    localStreamRef.current = null
+    recorderOwnedStreamsRef.current.forEach(stream => stream.getTracks().forEach(t => t.stop()))
+    recorderOwnedStreamsRef.current.clear()
+    hrSpeakOwnedStreamsRef.current.forEach(stream => stream.getTracks().forEach(t => t.stop()))
+    hrSpeakOwnedStreamsRef.current.clear()
+    if (hrVideoRef.current?.srcObject) {
+      hrVideoRef.current.srcObject.getTracks?.().forEach(t => t.stop())
+      hrVideoRef.current.srcObject = null
+    }
+    if (hrAudioRef.current?.srcObject) {
+      hrAudioRef.current.srcObject.getTracks?.().forEach(t => t.stop())
+      hrAudioRef.current.srcObject = null
+    }
+  }
+
+  function closePeerConnections() {
+    peerRef.current?.close()
+    peerRef.current = null
+    hrSpeakPcRef.current?.getSenders?.().forEach(sender => {
+      try {
+        sender.track?.stop()
+      } catch {}
+    })
+    hrSpeakPcRef.current?.close()
+    hrSpeakPcRef.current = null
+    hrSpeakOwnedStreamsRef.current.forEach(stream => stream.getTracks().forEach(t => t.stop()))
+    hrSpeakOwnedStreamsRef.current.clear()
+  }
 
   // HR two-way audio/video peer connection (separate from the main candidate→HR stream)
   const hrSpeakPcRef = useRef(null)
+  const hrSpeakOwnedStreamsRef = useRef(new Set())
   const hrSpeakPendingCandidatesRef = useRef([])
   const hrSpeakRemoteSocketIdRef = useRef(null)
   const hrVideoRef = useRef(null)
+
+  async function ensureFirebaseAuth() {
+    const authOpts = await getSocketAuth(currentUser)
+    if (authOpts?.uid) {
+      socketUidRef.current = authOpts.uid
+      setSocketUid(authOpts.uid)
+    }
+    return authOpts
+  }
+
+  function getEffectiveUserId() {
+    return candidateIdRef.current || candidateId || socketUidRef.current || currentUser?.uid || ''
+  }
+
+  async function getResponseErrorMessage(response) {
+    if (!response) return ''
+    try {
+      const data = await response.clone().json()
+      return String(data?.error || data?.message || '')
+    } catch {
+      try {
+        return await response.clone().text()
+      } catch {
+        return ''
+      }
+    }
+  }
+
+  function isExpiredAuthResponse(response, message = '') {
+    return response?.status === 401 && /expired|auth|token/i.test(String(message))
+  }
+
+  async function requestWithExpiredAuthRetry(requestFactory) {
+    let response = await requestFactory()
+    const message = response.status === 401 ? await getResponseErrorMessage(response) : ''
+    if (isExpiredAuthResponse(response, message)) {
+      await ensureFirebaseAuth()
+      response = await requestFactory()
+    }
+    return response
+  }
 
   function getCurrentPageUrl() {
     return typeof window !== 'undefined' ? window.location.href : `/interview/${roomId}`
@@ -192,7 +335,7 @@ export default function InterviewRoom() {
   function enqueueAction(action) {
     const item = {
       id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      candidate_id: candidateIdRef.current || candidateId || userId,
+      candidate_id: getEffectiveUserId(),
       session_id: sessionIdRef.current || sessionId,
       timestamp: new Date().toISOString(),
       page_url: getCurrentPageUrl(),
@@ -209,12 +352,18 @@ export default function InterviewRoom() {
     const batch = [...actionQueueRef.current]
     actionQueueRef.current = []
     try {
-      await fetch(apiUrl('/api/candidate/actions'), {
+      const res = await safeFetch(apiUrl('/api/candidate/actions'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actions: batch }),
+        body: JSON.stringify({
+          actions: batch,
+          room_id: roomId,
+          session_id: sessionIdRef.current,
+          link_token: linkTokenRef.current,
+        }),
         keepalive: true,
       })
+      if (!res.ok) throw new Error(`Action persistence failed (${res.status})`)
     } catch {
       actionQueueRef.current = [...batch, ...actionQueueRef.current]
     }
@@ -223,10 +372,11 @@ export default function InterviewRoom() {
   function buildProgressPayload(statusOverride = '') {
     return {
       session_id: sessionIdRef.current || sessionId,
-      candidate_id: candidateIdRef.current || candidateId || userId,
+      candidate_id: getEffectiveUserId(),
       room_id: roomId,
       campaign_id: campaignIdRef.current,
       link_id: linkIdRef.current,
+      link_token: linkTokenRef.current,
       observer_room_id: observerRoomIdRef.current,
       status: statusOverride || (phaseRef.current === 'ended' ? 'completed' : phaseRef.current === 'interview' ? 'in-progress' : 'draft'),
       fields: {
@@ -237,16 +387,16 @@ export default function InterviewRoom() {
         jobTitle: jobTitleRef.current.trim(),
         jobDescription: jobDescriptionRef.current.trim(),
       },
-      questions,
-      answers,
-      current_index: qIndex,
+      questions: questionsRef.current,
+      answers: answersRef.current,
+      current_index: qIndexRef.current,
       match_score: matchScoreRef.current,
       parsed_resume: parsedResumeRef.current,
       question_durations: questionDurationsRef.current,
-      pages_visited: pagesVisited,
+      pages_visited: pagesVisitedRef.current,
       duration: timerValueRef.current,
       violations: procHistoryRef.current.map(h => ({ type: h.type, timestamp: h.ts, details: h.msg })),
-      started_at: sessionStartedAt || new Date().toISOString(),
+      started_at: sessionStartedAtRef.current || new Date().toISOString(),
       evaluation: evaluationRef.current,
     }
   }
@@ -259,9 +409,9 @@ export default function InterviewRoom() {
 
   async function persistProgress(statusOverride = '') {
     const payload = buildProgressPayload(statusOverride)
-    if (!payload.session_id) return
+    if (!payload.session_id) return false
     try {
-      const res = await fetch(apiUrl('/api/candidate/progress'), {
+      const res = await safeFetch(apiUrl('/api/candidate/progress'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -270,8 +420,13 @@ export default function InterviewRoom() {
       if (res.ok) {
         const data = await res.json().catch(() => ({}))
         if (data.candidateId && !candidateIdRef.current) setCandidateId(data.candidateId)
+        return true
       }
-    } catch {}
+      throw new Error(`Progress persistence failed (${res.status})`)
+    } catch (err) {
+      console.warn('[Progress] Persistence failed:', err.message)
+      return false
+    }
   }
 
   function setTrackedField(fieldName, nextValue, setter) {
@@ -300,7 +455,7 @@ export default function InterviewRoom() {
 
   function captureCurrentQuestionDuration() {
     const startedAt = currentQuestionStartedAtRef.current
-    const currentQuestion = questions[qIndexRef.current]
+    const currentQuestion = questionsRef.current[qIndexRef.current]
     if (!startedAt || !currentQuestion) return
     const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000))
     const key = currentQuestion.id || `q-${qIndexRef.current + 1}`
@@ -336,22 +491,22 @@ export default function InterviewRoom() {
       metadata: { restoredQuestionIndex: draft.currentIndex || 0 },
     })
     if ((draft.questions || []).length) {
-      setTimeout(() => speakQuestion(Math.min(draft.currentIndex || 0, Math.max((draft.questions || []).length - 1, 0)), draft.questions || []), 400)
+      registerTimeout(autoRecordTimerRef, () => {
+        speakQuestion(Math.min(draft.currentIndex || 0, Math.max((draft.questions || []).length - 1, 0)), draft.questions || [])
+      }, 400)
     }
   }
 
   /* ═══════════════════ CAMERA ═══════════════════ */
   useEffect(() => {
+    isMountedRef.current = true
     startCamera()
     return () => {
-      if (progressFlushTimerRef.current) clearTimeout(progressFlushTimerRef.current)
-      if (actionFlushTimerRef.current) clearTimeout(actionFlushTimerRef.current)
+      isMountedRef.current = false
       captureCurrentQuestionDuration()
       flushActions()
       persistProgress(phaseRef.current === 'ended' ? 'completed' : phaseRef.current === 'interview' ? 'in-progress' : 'draft')
-      localStreamRef.current?.getTracks().forEach(t => t.stop())
-      clearInterval(faceIntervalRef.current)
-      clearInterval(timerRef.current)
+      clearAllTimers()
       // Stop any active recording
       if (mediaRecorderRef.current?.state === 'recording') {
         mediaRecorderRef.current.stop()
@@ -362,8 +517,8 @@ export default function InterviewRoom() {
         audioRef.current.src = ''
       }
       window.speechSynthesis?.cancel()
-      // Close peer connection
-      peerRef.current?.close()
+      stopAllMedia()
+      closePeerConnections()
       // Disconnect socket
       socketRef.current?.disconnect()
     }
@@ -396,12 +551,15 @@ export default function InterviewRoom() {
         return
       }
       try {
-        const res = await fetch(apiUrl(`/api/candidate/lookup?token=${encodeURIComponent(linkToken)}`))
+        await ensureFirebaseAuth()
+        const res = await requestWithExpiredAuthRetry(() =>
+          authFetch(apiUrl(`/api/candidate/lookup?token=${encodeURIComponent(linkToken)}`))
+        )
         if (res.status === 404) {
           setPrefillChecked(true)
           return
         }
-        if (!res.ok) throw new Error('Failed to load previous candidate data')
+        if (!res.ok) throw new Error((await getResponseErrorMessage(res)) || 'Failed to load previous candidate data')
         const data = await res.json()
         const fields = data.fields || {}
         setCandidateId(data.candidateId || '')
@@ -469,10 +627,20 @@ export default function InterviewRoom() {
     scheduleProgressPersist()
   }, [
     prefillChecked,
+    candidateName,
+    candidateEmail,
+    candidatePhone,
+    candidateCustomId,
+    jobTitle,
+    jobDescription,
     qIndex,
     answers,
-    phase,
     questions,
+    matchScore,
+    parsedResume,
+    phase,
+    questionDurations,
+    pagesVisited,
   ])
 
   useEffect(() => {
@@ -481,30 +649,31 @@ export default function InterviewRoom() {
 
   useEffect(() => {
     if (phase !== 'interview') return undefined
-    const interval = setInterval(() => {
+    intervalPersistTimerRef.current = setInterval(() => {
       persistProgress('in-progress')
     }, 15000)
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(intervalPersistTimerRef.current)
+      intervalPersistTimerRef.current = null
+    }
   }, [phase, roomId])
 
   useEffect(() => {
     if (phase !== 'interview') return
     function handleVisibility() {
       if (document.hidden) {
-        setTabSwitchCount(prev => {
-          const next = prev + 1
-          enqueueAction({
-            action_type: 'proctoring',
-            field_name: 'tab_switch',
-            message: `Tab switch detected (#${next}) at ${new Date().toLocaleTimeString()}`,
-          })
-          socketRef.current?.emit('proctoring-alert', { roomId, warning: `Tab switch detected (#${next})` })
-          if (next >= 5) {
-            setInterviewDisqualified(true)
-            toast.error('Interview disqualified: too many tab switches.')
-          }
-          return next
+        tabSwitchCountRef.current += 1
+        const next = tabSwitchCountRef.current
+        enqueueAction({
+          action_type: 'proctoring',
+          field_name: 'tab_switch',
+          message: `Tab switch detected (#${next}) at ${new Date().toLocaleTimeString()}`,
         })
+        socketRef.current?.emit('proctoring-alert', { roomId, warning: `Tab switch detected (#${next})` })
+        if (next >= 5) {
+          toast.error('Interview disqualified: too many tab switches.')
+          endInterview(answersRef.current)
+        }
       }
     }
     document.addEventListener('visibilitychange', handleVisibility)
@@ -531,51 +700,111 @@ export default function InterviewRoom() {
     let cancelled = false
 
     async function connectSocket() {
-      const authOpts = await getSocketAuth(currentUser)
+      let authOpts
+      try {
+        authOpts = await getSocketAuth(currentUser)
+      } catch (err) {
+        console.error('[Socket] Auth failed:', err.message)
+        setWebrtcError('Authentication failed. Please refresh the page.')
+        return
+      }
       if (cancelled) return
-      socket = io(SIGNAL, { transports: ['websocket', 'polling'], reconnection: true, auth: authOpts })
+      socketUidRef.current = authOpts.uid
+      setSocketUid(authOpts.uid)
+      socket = io(SIGNAL, { transports: ['websocket', 'polling'], reconnection: true, auth: { token: authOpts.token } })
       socketRef.current = socket
 
       socket.on('connect', () => {
         setSocketConnected(true)
-        socket.emit('join-room', { roomId, userId, role: 'candidate' })
+        socketAuthRetryingRef.current = false
+        socket.emit('join-room', { roomId, role: 'candidate' })
       })
       socket.on('disconnect', () => setSocketConnected(false))
-      socket.on('connect_error', (err) => {
-        console.warn('[Socket] Connection error:', err.message)
+      socket.on('connect_error', async (err) => {
+        const message = err?.message || ''
+        console.warn('[Socket] Connection error:', message)
+        if (/auth|token|expired|unauthorized|forbidden/i.test(message)) {
+          if (socketAuthRetryingRef.current) return
+          socketAuthRetryingRef.current = true
+          try {
+            const authOpts = await getSocketAuth(currentUser)
+            if (cancelled || socketRef.current !== socket) return
+            socket.auth = { token: authOpts.token }
+            socketUidRef.current = authOpts.uid
+            setSocketUid(authOpts.uid)
+            if (socketAuthRetryTimerRef.current) clearTimeout(socketAuthRetryTimerRef.current)
+            socketAuthRetryTimerRef.current = setTimeout(() => {
+              socketAuthRetryTimerRef.current = null
+              socketAuthRetryingRef.current = false
+              if (!cancelled && socketRef.current === socket) socket.connect()
+            }, 500)
+            setWebrtcError('Authentication refreshed. Reconnecting...')
+            return
+          } catch (authErr) {
+            console.warn('[Socket] Auth refresh failed after connection error:', authErr.message)
+            socketAuthRetryingRef.current = false
+            setWebrtcError('Authentication failed. Please refresh the page.')
+            return
+          }
+        }
+        socketAuthRetryingRef.current = false
+        setWebrtcError('Socket connection error. Retrying...')
       })
 
       // HR observer joined — send them our stream
-      socket.on('peer-joined', ({ role, socketId }) => {
+      socket.on('peer-joined', ({ role, socketId } = {}) => {
+        if (typeof socketId !== 'string') return
         if (role === 'hr') sendStreamToPeer(socketId)
       })
 
       // HR requested our stream (in case they joined before us or reconnected)
-      socket.on('send-stream', ({ to, forceRelay }) => {
+      socket.on('send-stream', ({ to, forceRelay } = {}) => {
+        if (typeof to !== 'string') return
         sendStreamToPeer(to, { forceRelay: Boolean(forceRelay) })
       })
 
       // WebRTC signaling
-      socket.on('offer', async ({ from, offer }) => {
-        const pc = await createPC(from)
-        await pc.setRemoteDescription(new RTCSessionDescription(offer))
-        for (const c of mainPendingCandidatesRef.current) {
-          await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
+      socket.on('offer', async ({ from, offer } = {}) => {
+        if (typeof from !== 'string' || !offer?.type || !offer?.sdp) return
+        try {
+          const pc = await createPC(from)
+          await pc.setRemoteDescription(new RTCSessionDescription(offer))
+          for (const c of mainPendingCandidatesRef.current) {
+            if (isValidIceCandidate(c)) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
+          }
+          mainPendingCandidatesRef.current = []
+          const answer = await pc.createAnswer()
+          await pc.setLocalDescription(answer)
+          socket.emit('answer', { to: from, answer })
+        } catch (err) {
+          console.error('[WebRTC] Failed to handle offer:', err)
+          setWebrtcError('Video connection failed. Waiting for retry.')
         }
-        mainPendingCandidatesRef.current = []
-        const answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
-        socket.emit('answer', { to: from, answer })
       })
-      socket.on('answer', async ({ from, answer }) => {
-        if (from === hrSpeakRemoteSocketIdRef.current && hrSpeakPcRef.current?.signalingState === 'have-local-offer') {
-          await hrSpeakPcRef.current.setRemoteDescription(new RTCSessionDescription(answer))
-        } else if (peerRef.current?.signalingState === 'have-local-offer') {
-          await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+      socket.on('answer', async ({ from, answer } = {}) => {
+        if (typeof from !== 'string' || !answer?.type || !answer?.sdp) return
+        try {
+          if (from === hrSpeakRemoteSocketIdRef.current && hrSpeakPcRef.current?.signalingState === 'have-local-offer') {
+            await hrSpeakPcRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+            // Flush buffered ICE candidates for HR speak peer
+            for (const c of hrSpeakPendingCandidatesRef.current) {
+              if (isValidIceCandidate(c)) await hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
+            }
+            hrSpeakPendingCandidatesRef.current = []
+          } else if (peerRef.current?.signalingState === 'have-local-offer') {
+            await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+            // Bug #5 fix: Flush buffered ICE candidates for main peer
+            for (const c of mainPendingCandidatesRef.current) {
+              if (isValidIceCandidate(c)) await peerRef.current.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
+            }
+            mainPendingCandidatesRef.current = []
+          }
+        } catch (err) {
+          console.error('[WebRTC] Failed to set remote description from answer:', err)
         }
       })
-      socket.on('ice-candidate', ({ from, candidate }) => {
-        if (!candidate) return
+      socket.on('ice-candidate', ({ from, candidate } = {}) => {
+        if (typeof from !== 'string' || !isValidIceCandidate(candidate)) return
         if (from === hrSpeakRemoteSocketIdRef.current && hrSpeakPcRef.current?.remoteDescription) {
           hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
         } else if (peerRef.current?.remoteDescription) {
@@ -586,9 +815,16 @@ export default function InterviewRoom() {
       })
 
       // Room locked — another candidate is already using this link
-      socket.on('room-locked', ({ message }) => {
+      socket.on('room-locked', ({ message } = {}) => {
         setRoomLocked(true)
-        toast.error(message)
+        toast.error(message || 'This interview room is already in use.')
+      })
+
+      socket.on('interview-ended', ({ sessionId: endedSessionId } = {}) => {
+        toast.info('Interview ended.')
+        const reportId = endedSessionId || sessionIdRef.current
+        if (reportId) navigate(`/report/${reportId}`)
+        else navigate('/')
       })
 
       // HR speak
@@ -597,21 +833,45 @@ export default function InterviewRoom() {
         setHrSpeaking(false); setHrSpeakRequest(false); setHrCustomQuestion(null)
         hrSpeakRemoteSocketIdRef.current = null
         // Close the HR speak peer connection and clean up
-        hrSpeakPcRef.current?.close()
+        if (hrSpeakPcRef.current) {
+          hrSpeakPcRef.current.getSenders?.().forEach(sender => {
+            try {
+              sender.track?.stop()
+            } catch {}
+          })
+          hrSpeakPcRef.current.close()
+        }
         hrSpeakPcRef.current = null
+        hrSpeakOwnedStreamsRef.current.forEach(stream => stream.getTracks().forEach(track => track.stop()))
+        hrSpeakOwnedStreamsRef.current.clear()
         hrSpeakPendingCandidatesRef.current = []
-        if (hrVideoRef.current) hrVideoRef.current.srcObject = null
+        if (hrVideoRef.current?.srcObject) {
+          hrVideoRef.current.srcObject.getTracks?.().forEach(track => track.stop())
+          hrVideoRef.current.srcObject = null
+        }
+        if (hrAudioRef.current?.srcObject) {
+          hrAudioRef.current.srcObject.getTracks?.().forEach(track => track.stop())
+          hrAudioRef.current.srcObject = null
+        }
         console.log('[WebRTC] HR speak peer connection closed')
       })
 
       // ── HR two-way audio/video signaling ──
       // HR sends a WebRTC offer when they start speaking (after candidate accepts)
-      socket.on('hr-offer', async ({ from, offer }) => {
+      socket.on('hr-offer', async ({ from, offer } = {}) => {
+        if (typeof from !== 'string' || !offer?.type || !offer?.sdp) return
         console.log('[WebRTC] Received HR offer for two-way media')
         hrSpeakRemoteSocketIdRef.current = from
         try {
           // Close any previous HR speak peer connection
+          hrSpeakPcRef.current?.getSenders?.().forEach(sender => {
+            try {
+              sender.track?.stop()
+            } catch {}
+          })
           hrSpeakPcRef.current?.close()
+          hrSpeakOwnedStreamsRef.current.forEach(stream => stream.getTracks().forEach(track => track.stop()))
+          hrSpeakOwnedStreamsRef.current.clear()
           hrSpeakPendingCandidatesRef.current = []
 
           const config = await buildRtcConfigAsync()
@@ -621,7 +881,9 @@ export default function InterviewRoom() {
           // Add candidate's local tracks so HR can see/hear candidate
           const localStream = localStreamRef.current
           if (localStream) {
-            localStream.getTracks().forEach(track => pc.addTrack(track, localStream))
+            const speakStream = new MediaStream(localStream.getTracks().map(track => track.clone()))
+            hrSpeakOwnedStreamsRef.current.add(speakStream)
+            speakStream.getTracks().forEach(track => pc.addTrack(track, speakStream))
           }
 
           // Handle remote tracks from HR (audio + video)
@@ -662,7 +924,7 @@ export default function InterviewRoom() {
 
           // Add any pending ICE candidates
           for (const c of hrSpeakPendingCandidatesRef.current) {
-            await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
+            if (isValidIceCandidate(c)) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
           }
           hrSpeakPendingCandidatesRef.current = []
 
@@ -678,7 +940,8 @@ export default function InterviewRoom() {
       })
 
       // ICE candidates from HR for the two-way peer connection
-      socket.on('hr-ice-candidate', async ({ candidate }) => {
+      socket.on('hr-ice-candidate', async ({ candidate } = {}) => {
+        if (!isValidIceCandidate(candidate)) return
         if (hrSpeakPcRef.current?.remoteDescription) {
           try {
             await hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
@@ -692,18 +955,20 @@ export default function InterviewRoom() {
       })
 
       // HR custom question — HR takes over from AI and asks their own question
-      socket.on('hr-custom-question', ({ question }) => {
+      socket.on('hr-custom-question', async ({ question } = {}) => {
+        if (typeof question !== 'string' || !question.trim()) return
         setHrCustomQuestion(question)
         setHrSpeaking(false) // Allow candidate to answer
         stopSpeaking()
         setTextAnswer('')
         setCodeValue('')
         toast.info('HR asked a custom question')
+        await speakText(question)
       })
 
       // HR question audio — play TTS audio of HR's custom question
-      socket.on('hr-question-audio', ({ audioUrl }) => {
-        if (audioUrl && audioRef.current) {
+      socket.on('hr-question-audio', ({ audioUrl } = {}) => {
+        if (typeof audioUrl === 'string' && audioUrl && audioRef.current) {
           audioRef.current.src = audioUrl.startsWith('http') ? audioUrl : `${BACKEND}${audioUrl}`
           audioRef.current.play().catch(() => {})
         }
@@ -714,8 +979,9 @@ export default function InterviewRoom() {
 
     return () => {
       cancelled = true
+      if (sendStreamRetryRef.current) clearTimeout(sendStreamRetryRef.current)
       socket?.disconnect()
-      peerRef.current?.close()
+      closePeerConnections()
     }
   }, [roomId])
 
@@ -723,6 +989,18 @@ export default function InterviewRoom() {
     if (!socketConnected || !socketRef.current || !observerRoomId || observerRoomId === roomId) return
     socketRef.current.emit('register-observer-alias', { observerRoomId, sourceRoomId: roomId })
   }, [observerRoomId, roomId, socketConnected])
+
+  useEffect(() => {
+    turnWatcherStopRef.current = watchTurnCredentials(60000, (iceServers) => {
+      if (iceServers?.length) {
+        console.log('[TURN] Refreshed ICE credentials from watcher:', iceServers.length)
+      }
+    })
+    return () => {
+      turnWatcherStopRef.current?.()
+      turnWatcherStopRef.current = null
+    }
+  }, [])
 
   const hrAudioRef = useRef(null)
 
@@ -736,37 +1014,90 @@ export default function InterviewRoom() {
   async function maybeLogSelectedPath(pc, contextLabel = 'candidate') {
     const pair = await getSelectedCandidatePairInfo(pc)
     if (!pair) return
-    console.info(`[WebRTC] ${contextLabel} connected via ${pair.usesRelay ? 'TURN relay' : 'direct'} (${pair.protocol || 'udp'})`, pair)
+    console.info(`[WebRTC] ${contextLabel} connected via ${pair.usesRelay ? 'TURN relay' : 'direct'} (${pair.protocol || 'udp'})`)
+  }
+
+  async function restartPeerAfterIceFailure(reason = 'connection-failed') {
+    const remotePeerId = remotePeerIdRef.current
+    if (!remotePeerId) return
+    console.warn(`[WebRTC] Refreshing TURN credentials after ${reason}`)
+    try {
+      await refreshTurnCredentials()
+    } catch (err) {
+      console.warn('[WebRTC] TURN credential refresh failed before restart:', err.message)
+    }
+    if (iceRestartTimerRef.current) clearTimeout(iceRestartTimerRef.current)
+    iceRestartTimerRef.current = setTimeout(() => {
+      iceRestartTimerRef.current = null
+      if (!isMountedRef.current || remotePeerIdRef.current !== remotePeerId) return
+      sendStreamToPeer(remotePeerId, { forceRelay: true, restartIce: true }).catch(() => {})
+    }, 1000)
   }
 
   function triggerRelayFallback(reason = 'connection-failed') {
     if (relayFallbackAttemptedRef.current || activeRelayModeRef.current || !remotePeerIdRef.current || !hasTurnConfig()) return
     relayFallbackAttemptedRef.current = true
     console.warn(`[WebRTC] Switching candidate stream to TURN relay after ${reason}`)
-    sendStreamToPeer(remotePeerIdRef.current, { forceRelay: true, restartIce: true }).catch(() => {})
+    restartPeerAfterIceFailure(reason)
   }
 
   async function createPC(remotePeerId, { forceRelay = false } = {}) {
     peerRef.current?.close()
     remotePeerIdRef.current = remotePeerId
     activeRelayModeRef.current = forceRelay
-    const config = await buildRtcConfigAsync({ forceRelay })
+
+    // Error 3/10 fix: Await ICE servers before creating RTCPeerConnection
+    let config
+    try {
+      config = await buildRtcConfigAsync({ forceRelay })
+      console.log('[WebRTC] createPC: ICE servers resolved, forceRelay=', forceRelay, 'servers=', config.iceServers?.length)
+    } catch (err) {
+      console.error('[WebRTC] createPC: buildRtcConfigAsync failed:', err.message)
+      setWebrtcError('Failed to get TURN credentials. Cross-network video may not work.')
+      // Still create PC with fallback config
+      config = {
+        iceServers: getFallbackIceServers(),
+        iceTransportPolicy: forceRelay ? 'relay' : 'all',
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+        iceCandidatePoolSize: forceRelay ? 0 : 8,
+      }
+    }
+
     const pc = new RTCPeerConnection(config)
     peerRef.current = pc
+    setWebrtcError(null) // Clear any previous error
+
     const stream = localStreamRef.current
     if (stream) stream.getTracks().forEach(t => pc.addTrack(t, stream))
+
+    // Error 9 fix: Send ICE candidates to specific peer (not broadcast)
     pc.onicecandidate = ({ candidate }) => {
-      if (candidate) socketRef.current?.emit('ice-candidate', { to: remotePeerId, candidate })
+      if (candidate) {
+        console.log('[ICE] Candidate for', remotePeerId, ':', candidate.candidate?.substring(0, 50))
+        socketRef.current?.emit('ice-candidate', { to: remotePeerId, candidate })
+      }
     }
+
+    // ICE logging (Error 3 fix)
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState
+      console.log('[ICE] Connection state:', state, 'forceRelay:', forceRelay)
       if (state === 'connected' || state === 'completed') maybeLogSelectedPath(pc, 'candidate')
-      if (state === 'failed') triggerRelayFallback('ice-failed')
+      if (state === 'failed') {
+        console.error('[ICE] Connection failed for peer', remotePeerId)
+        restartPeerAfterIceFailure('ice-failed')
+      }
+    }
+    pc.onicegatheringstatechange = () => {
+      console.log('[ICE] Gathering state:', pc.iceGatheringState)
     }
     pc.onconnectionstatechange = () => {
       const state = pc.connectionState
+      console.log('[WebRTC] Connection state:', state)
       if (state === 'connected') maybeLogSelectedPath(pc, 'candidate')
-      if (state === 'failed' || state === 'disconnected') triggerRelayFallback(`pc-${state}`)
+      if (state === 'failed') restartPeerAfterIceFailure(`pc-${state}`)
+      if (state === 'disconnected') triggerRelayFallback(`pc-${state}`)
     }
     // Play HR's audio when they speak (remote tracks from HR observer)
     pc.ontrack = ({ streams }) => {
@@ -802,11 +1133,26 @@ export default function InterviewRoom() {
   }
 
   async function sendStreamToPeer(remotePeerId, { forceRelay = false, restartIce = false } = {}) {
-    await getReadyLocalStream()
-    const pc = await createPC(remotePeerId, { forceRelay })
-    const offer = await pc.createOffer({ iceRestart: restartIce || forceRelay })
-    await pc.setLocalDescription(offer)
-    socketRef.current?.emit('offer', { to: remotePeerId, offer, forceRelay })
+    try {
+      await getReadyLocalStream()
+      const pc = await createPC(remotePeerId, { forceRelay })
+      const offer = await pc.createOffer({ iceRestart: restartIce || forceRelay })
+      await pc.setLocalDescription(offer)
+      console.log('[WebRTC] Sent offer to', remotePeerId, 'forceRelay=', forceRelay)
+      socketRef.current?.emit('offer', { to: remotePeerId, offer })
+    } catch (err) {
+      console.error('[WebRTC] sendStreamToPeer failed:', err.message)
+      setWebrtcError('Video connection failed. Attempting retry...')
+      // Retry with new TURN credentials after a delay (Bug #2 fix: track timeout for cleanup)
+      if (sendStreamRetryRef.current) clearTimeout(sendStreamRetryRef.current)
+      sendStreamRetryRef.current = setTimeout(() => {
+        sendStreamRetryRef.current = null
+        if (remotePeerIdRef.current === remotePeerId) {
+          console.log('[WebRTC] Retrying sendStreamToPeer with fresh TURN credentials')
+          sendStreamToPeer(remotePeerId, { forceRelay: true, restartIce: true })
+        }
+      }, 3000)
+    }
   }
 
   function acceptHrSpeak() {
@@ -926,9 +1272,36 @@ export default function InterviewRoom() {
 
   useEffect(() => {
     if (phase !== 'interview' || !faceApiReady || !window.faceapi) return
-    faceIntervalRef.current = setInterval(runProctoring, 2500)
-    return () => clearInterval(faceIntervalRef.current)
+    let stopped = false
+    const tick = async () => {
+      if (stopped || phaseRef.current !== 'interview') return
+      if (!proctoringInFlightRef.current) {
+        proctoringInFlightRef.current = true
+        try {
+          await runProctoring()
+        } finally {
+          proctoringInFlightRef.current = false
+        }
+      }
+      proctoringTimerRef.current = setTimeout(tick, 2500)
+    }
+    proctoringTimerRef.current = setTimeout(tick, 0)
+    return () => {
+      stopped = true
+      clearTimeout(proctoringTimerRef.current)
+      proctoringTimerRef.current = null
+    }
   }, [phase, faceApiReady])
+
+  function shouldEmitProctoringAlert(warning, windowMs = 10000) {
+    const key = warning?.type || warning?.msg
+    if (!key) return false
+    const now = Date.now()
+    const last = proctoringAlertDedupeRef.current[key] || 0
+    if (now - last < windowMs) return false
+    proctoringAlertDedupeRef.current[key] = now
+    return true
+  }
 
   async function runProctoring() {
     const video = localVideoRef.current
@@ -996,14 +1369,15 @@ export default function InterviewRoom() {
     }
 
     setProcWarnings(warnings.slice(0, 10))
-    if (warnings.length > 0) {
+    const emittedWarnings = warnings.filter(shouldEmitProctoringAlert)
+    if (emittedWarnings.length > 0) {
       const ts = new Date().toLocaleTimeString()
-      setProcHistory(prev => [...warnings.map(w => ({ ...w, ts })), ...prev].slice(0, 50))
-      warnings.forEach(w => socketRef.current?.emit('proctoring-alert', { roomId, warning: w.msg }))
+      setProcHistory(prev => [...emittedWarnings.map(w => ({ ...w, ts })), ...prev].slice(0, 50))
+      emittedWarnings.forEach(w => socketRef.current?.emit('proctoring-alert', { roomId, warning: w.msg }))
 
       // Trigger ProctoringAlert component for critical warnings
-      const critical = warnings.find(w => ['no-face', 'multi-face', 'multi-person'].includes(w.type))
-      const objectWarn = warnings.find(w => w.type === 'object')
+      const critical = emittedWarnings.find(w => ['no-face', 'multi-face', 'multi-person'].includes(w.type))
+      const objectWarn = emittedWarnings.find(w => w.type === 'object')
       if (critical && window.__proctoringTrigger) {
         window.__proctoringTrigger(
           critical.type === 'no-face' ? 'faceMissing' : 'multipleFaces',
@@ -1042,53 +1416,91 @@ export default function InterviewRoom() {
     setAiSpeaking(false)
   }
 
-  async function speakQuestion(idx, pool) {
-    const qs = pool ?? questions
-    if (!qs[idx]) return
-    setAiSpeaking(true)
-
-    // Add to dialogue history
-    setDialogue(prev => [...prev, { role: 'ai', text: qs[idx].text, ts: new Date().toLocaleTimeString(), qNum: idx + 1 }])
-    setTimeout(() => dialogueEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
-
-    // Notify HR what AI is saying
-    socketRef.current?.emit('ai-speaking', { roomId, question: qs[idx].text, qIndex: idx })
-
-    // Try backend TTS (Sarvam AI → gTTS fallback)
-    try {
-      const res = await fetch(apiUrl('/api/text-to-speech'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: qs[idx].text, language: voiceLangRef.current, gender: voiceGenderRef.current }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        if (data.audio_url && audioRef.current) {
-          audioRef.current.src = `${BACKEND}${data.audio_url}`
-          audioRef.current.play().catch(() => {})
-          return
-        }
-        // If backend says use browser fallback
-        if (data.fallback === 'browser') throw new Error('use browser')
+  function playAudioBlob(blob) {
+    return new Promise((resolve, reject) => {
+      if (!audioRef.current) {
+        reject(new Error('Audio element unavailable'))
+        return
       }
-    } catch {}
+      const url = URL.createObjectURL(blob)
+      const audio = audioRef.current
+      const cleanup = () => {
+        audio.onended = null
+        audio.onerror = null
+        URL.revokeObjectURL(url)
+      }
+      audio.onended = () => {
+        cleanup()
+        resolve()
+      }
+      audio.onerror = () => {
+        cleanup()
+        reject(new Error('Audio playback failed'))
+      }
+      audio.src = url
+      audio.play().catch((err) => {
+        cleanup()
+        reject(err)
+      })
+    })
+  }
 
-    // Fallback: browser SpeechSynthesis
-    if ('speechSynthesis' in window) {
+  function speakWithBrowser(text) {
+    return new Promise((resolve) => {
+      if (!('speechSynthesis' in window)) {
+        resolve()
+        return
+      }
       window.speechSynthesis.cancel()
-      const u = new SpeechSynthesisUtterance(qs[idx].text)
+      const u = new SpeechSynthesisUtterance(text)
       u.lang = voiceLangRef.current
-      u.rate = 0.95; u.pitch = 1.0
-      // Try to find a matching voice
+      u.rate = 0.95
+      u.pitch = 1.0
       const voices = window.speechSynthesis.getVoices()
       const match = voices.find(v => v.lang.startsWith(voiceLangRef.current.split('-')[0]))
       if (match) u.voice = match
-      u.onend = () => setAiSpeaking(false)
-      u.onerror = () => setAiSpeaking(false)
+      u.onend = resolve
+      u.onerror = resolve
       window.speechSynthesis.speak(u)
-    } else {
+    })
+  }
+
+  async function speakText(text) {
+    if (!text) return
+    setAiSpeaking(true)
+    try {
+      const res = await safeFetch(apiUrl('/api/text-to-speech'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, language: voiceLangRef.current, gender: voiceGenderRef.current }),
+      })
+      const contentType = res.headers.get('content-type') || ''
+      if (res.ok && contentType.includes('audio')) {
+        await playAudioBlob(await res.blob())
+      } else if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json().catch(() => ({}))
+        if (data.fallback === 'browser') await speakWithBrowser(text)
+      } else {
+        await speakWithBrowser(text)
+      }
+    } catch {
+      await speakWithBrowser(text)
+    } finally {
       setAiSpeaking(false)
     }
+  }
+
+  async function speakQuestion(idx, pool) {
+    const qs = pool ?? questionsRef.current
+    if (!qs[idx]) return
+
+    // Add to dialogue history
+    setDialogue(prev => [...prev, { role: 'ai', text: qs[idx].text, ts: new Date().toLocaleTimeString(), qNum: idx + 1 }])
+    registerTimeout(dialogueScrollTimerRef, () => dialogueEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+
+    // Notify HR what AI is saying
+    socketRef.current?.emit('ai-speaking', { roomId, question: qs[idx].text, qIndex: idx })
+    await speakText(qs[idx].text)
   }
 
   /* ═══════════════════ START INTERVIEW ═══════════════════ */
@@ -1097,6 +1509,15 @@ export default function InterviewRoom() {
     if (!candidateName.trim()) { toast.error('Please enter your name.'); return }
     if (!candidateEmail.trim()) { toast.error('Please enter your email.'); return }
     setPhase('loading')
+    let authUid = userId
+    try {
+      const authOpts = await ensureFirebaseAuth()
+      authUid = authOpts.uid || authUid
+    } catch {
+      toast.error('Authentication failed. Please refresh and try again.')
+      setPhase('setup')
+      return
+    }
     enqueueAction({
       action_type: 'submit',
       field_name: 'interview_start',
@@ -1109,7 +1530,7 @@ export default function InterviewRoom() {
       fd.append('resume', resumeFile)
       fd.append('job_description', jobDescription)
       try {
-        const res = await fetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd })
+        const res = await safeFetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd }, { skipValidation: true })
         if (res.ok) {
           const data = await res.json()
           score = data.match_score ?? 50
@@ -1127,28 +1548,30 @@ export default function InterviewRoom() {
     setSessionStartedAt(startedAt)
 
     try {
-      const startRes = await fetch(apiUrl('/api/interview/start'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: activeSessionId,
-          room_id: roomId,
-          candidate_id: candidateId || userId,
-          candidate_email: candidateEmail.trim(),
-          candidate_name: candidateName.trim(),
-          candidate_phone: candidatePhone.trim(),
-          candidate_custom_id: candidateCustomId.trim(),
-          job_title: jobTitle.trim(),
-          job_description: jobDescription.trim(),
-          match_score: score,
-          started_at: startedAt,
-          link_token: linkToken,
-          link_id: linkId,
-          parsed_resume: parsedResume,
-          pages_visited: pagesVisited,
-          question_durations: questionDurationsRef.current,
-        }),
-      })
+      const startRes = await requestWithExpiredAuthRetry(() =>
+        safeFetch(apiUrl('/api/interview/start'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: activeSessionId,
+            room_id: roomId,
+            candidate_id: candidateId || authUid,
+            candidate_email: candidateEmail.trim(),
+            candidate_name: candidateName.trim(),
+            candidate_phone: candidatePhone.trim(),
+            candidate_custom_id: candidateCustomId.trim(),
+            job_title: jobTitle.trim(),
+            job_description: jobDescription.trim(),
+            match_score: score,
+            started_at: startedAt,
+            link_token: linkToken,
+            link_id: linkId,
+            parsed_resume: parsedResume,
+            pages_visited: pagesVisitedRef.current,
+            question_durations: questionDurationsRef.current,
+          }),
+        })
+      )
       if (startRes.ok) {
         const startData = await startRes.json()
         if (startData.candidateId) setCandidateId(startData.candidateId)
@@ -1157,12 +1580,16 @@ export default function InterviewRoom() {
           setCampaignId(startData.campaignId)
         }
         if (startData.observerRoomId) setObserverRoomId(startData.observerRoomId)
+      } else {
+        throw new Error((await getResponseErrorMessage(startRes)) || `Interview start failed (${startRes.status})`)
       }
-    } catch {}
+    } catch (err) {
+      toast.warning(err.message || 'Could not persist interview start. Continuing with local session.')
+    }
 
     let selectedQs = []
     try {
-      const res = await fetch(apiUrl('/api/select-questions'), {
+      const res = await safeFetch(apiUrl('/api/select-questions'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ campaign_id: resolvedCampaignId || roomId, match_score: score, job_title: jobTitle || 'Software Engineer', job_description: jobDescription }),
@@ -1181,7 +1608,7 @@ export default function InterviewRoom() {
     await speakQuestion(0, selectedQs)
     setPhase('interview')
     // Auto-start voice recording after AI finishes speaking (voice-first)
-    setTimeout(() => { if (selectedQs[0]?.type !== 'code') startRecording() }, 1500)
+    registerTimeout(autoRecordTimerRef, () => { if (selectedQs[0]?.type !== 'code') startRecording() }, 1500)
   }
 
   function getDefaultQuestions() {
@@ -1200,8 +1627,10 @@ export default function InterviewRoom() {
   function toggleRecording() { recording ? stopRecording() : startRecording() }
 
   async function startRecording() {
+    if (!isMountedRef.current || recording || aiSpeaking) return
     // Get audio-only stream (works even if camera stream exists)
     let audioStream = null
+    let ownsAudioStream = false
     try {
       // Extract audio tracks from existing stream, or request new audio-only stream
       const existingAudio = localStreamRef.current?.getAudioTracks()
@@ -1209,6 +1638,8 @@ export default function InterviewRoom() {
         audioStream = new MediaStream(existingAudio)
       } else {
         audioStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        ownsAudioStream = true
+        recorderOwnedStreamsRef.current.add(audioStream)
       }
     } catch {
       toast.error('Microphone access denied. Please allow mic permissions.')
@@ -1239,20 +1670,34 @@ export default function InterviewRoom() {
     }
 
     if (!mr) {
+      if (ownsAudioStream) {
+        audioStream.getTracks().forEach(t => t.stop())
+        recorderOwnedStreamsRef.current.delete(audioStream)
+      }
       toast.error('Audio recording not supported on this browser. Please type your answer.')
       return
     }
 
     mr.ondataavailable = e => e.data.size && chunksRef.current.push(e.data)
-    mr.onstop = handleRecordingStop
+    mr.onstop = () => {
+      if (ownsAudioStream) {
+        audioStream.getTracks().forEach(t => t.stop())
+        recorderOwnedStreamsRef.current.delete(audioStream)
+      }
+      handleRecordingStop()
+    }
     mr.start()
     mediaRecorderRef.current = mr
     setRecording(true)
   }
 
-  function stopRecording() { mediaRecorderRef.current?.stop(); setRecording(false) }
+  function stopRecording() {
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop()
+    setRecording(false)
+  }
 
   async function handleRecordingStop() {
+    if (!isMountedRef.current) return
     setTranscribing(true)
     const mime = recMimeRef.current || 'audio/webm'
     const ext = mime.includes('mp4') ? 'mp4' : mime.includes('ogg') ? 'ogg' : 'webm'
@@ -1260,13 +1705,13 @@ export default function InterviewRoom() {
     const fd = new FormData()
     fd.append('audio', blob, `answer.${ext}`)
     try {
-      const res = await fetch(apiUrl('/api/transcribe'), { method: 'POST', body: fd })
+      const res = await safeFetch(apiUrl('/api/transcribe'), { method: 'POST', body: fd }, { skipValidation: true })
       if (res.ok) {
         const data = await res.json()
-        if (data.text) setTextAnswer(prev => prev ? prev + ' ' + data.text : data.text)
+        if (data.text && isMountedRef.current) setTextAnswer(prev => prev ? prev + ' ' + data.text : data.text)
       }
     } catch { toast.warning('Transcription unavailable — type your answer.') }
-    setTranscribing(false)
+    if (isMountedRef.current) setTranscribing(false)
   }
 
   /* ═══════════════════ SUBMIT ANSWER ═══════════════════ */
@@ -1284,7 +1729,7 @@ export default function InterviewRoom() {
 
     // Add answer to dialogue history
     setDialogue(prev => [...prev, { role: 'candidate', text: answerText.substring(0, 500), ts: new Date().toLocaleTimeString(), type: q.type }])
-    setTimeout(() => dialogueEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+    registerTimeout(dialogueScrollTimerRef, () => dialogueEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
 
     setTextAnswer(''); setCodeValue('')
     answerDraftRef.current = ''
@@ -1305,7 +1750,7 @@ export default function InterviewRoom() {
     })
 
     // Evaluate in background
-    fetch(apiUrl('/api/evaluate-answer-ai'), {
+    safeFetch(apiUrl('/api/evaluate-answer-ai'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question: q.text, answer: answerText, model_answer: q.modelAnswer || '', rubric: q.rubric || '', session_id: sessionId, question_index: qIndex }),
@@ -1321,7 +1766,7 @@ export default function InterviewRoom() {
       await speakQuestion(nextIdx)
       // Auto-start recording for text questions (voice-first)
       if (questions[nextIdx]?.type !== 'code') {
-        setTimeout(() => startRecording(), 1500)
+        registerTimeout(autoRecordTimerRef, () => startRecording(), 1500)
       }
     }
     setSubmitting(false)
@@ -1343,14 +1788,14 @@ export default function InterviewRoom() {
     })
 
     try {
-      const res = await fetch(apiUrl('/api/generate-evaluation'), {
+      const res = await safeFetch(apiUrl('/api/generate-evaluation'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId,
           room_id: roomId,
           campaign_id: campaignId,
-          candidate_id: candidateId || userId,
+          candidate_id: candidateId || getEffectiveUserId(),
           candidate_email: candidateEmail.trim(),
           candidate_phone: candidatePhone.trim(),
           candidate_custom_id: candidateCustomId.trim(),
@@ -1371,17 +1816,23 @@ export default function InterviewRoom() {
           current_index: questions.length,
         }),
       })
-      if (res.ok) setEvaluation(await res.json())
-    } catch {}
+      if (!res.ok) throw new Error(`Evaluation failed (${res.status})`)
+      setEvaluation(await res.json())
+    } catch (err) {
+      toast.error('Final evaluation failed. Your interview data may not be fully saved.')
+      console.error('[Interview] Final evaluation failed:', err)
+    }
 
-    await persistProgress('completed')
+    const saved = await persistProgress('completed')
+    if (!saved) {
+      toast.error('Final save failed. Please keep this page open and try again.')
+    }
     await flushActions()
     toast.success('Interview complete!')
     setPhase('ended')
   }
 
   function handleDisqualified() {
-    setInterviewDisqualified(true)
     endInterview(answersRef.current)
   }
 
@@ -1394,7 +1845,8 @@ export default function InterviewRoom() {
       const fd = new FormData()
       fd.append('resume', file)
       fd.append('job_description', jobDescription || jobTitle)
-      const res = await fetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd })
+      await ensureFirebaseAuth()
+      const res = await safeFetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd }, { skipValidation: true })
       if (res.ok) {
         const data = await res.json()
         setParsedResume(data)

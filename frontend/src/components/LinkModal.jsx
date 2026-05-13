@@ -14,6 +14,7 @@ import React, { useState } from 'react'
 import Modal from './Modal'
 import { useToast } from './Toast'
 import { apiUrl, getPublicAppOrigin } from '../lib/runtimeConfig'
+import { safeFetch } from '../utils/api'
 
 export default function LinkModal({
   isOpen,
@@ -78,7 +79,7 @@ export default function LinkModal({
         frontendUrl: getPublicAppOrigin(),
       }
 
-      const res = await fetch(apiUrl('/api/generate-link'), {
+      const res = await safeFetch(apiUrl('/api/generate-link'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

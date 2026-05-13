@@ -9,6 +9,7 @@ import { doc, getDoc, updateDoc } from 'firebase/firestore'
 import { updatePassword } from 'firebase/auth'
 import { db, auth } from '../firebase'
 import { apiUrl } from '../lib/runtimeConfig'
+import { safeFetch } from '../utils/api'
 
 export default function ProfilePage() {
   const { currentUser, userRole } = useAuth()
@@ -78,7 +79,7 @@ export default function ProfilePage() {
     try {
       const fd = new FormData()
       fd.append('resume', file)
-      const res = await fetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd })
+      const res = await safeFetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd }, { skipValidation: true })
       if (res.ok) {
         const data = await res.json()
         setParsedResume(data)
