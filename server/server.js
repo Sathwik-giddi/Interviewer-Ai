@@ -7,10 +7,11 @@ const { Server }    = require('socket.io')
 const cors          = require('cors')
 const rateLimit     = require('express-rate-limit')
 const admin         = require('firebase-admin')
+const { createAdapter } = require('@socket.io/redis-adapter')
 const roomStore     = require('./roomStore')
 
 // ─── Validate required environment variables ─────────────────────────────────
-const REQUIRED_ENV = ['METERED_API_KEY', 'TURN_USERNAME', 'TURN_CREDENTIAL']
+const REQUIRED_ENV = ['METERED_API_KEY', 'TURN_DOMAIN', 'TURN_USERNAME', 'TURN_CREDENTIAL']
 const missingEnv = REQUIRED_ENV.filter(k => !process.env[k])
 if (missingEnv.length) {
   console.error(`[FATAL] Missing required environment variables: ${missingEnv.join(', ')}`)
@@ -21,9 +22,10 @@ if (missingEnv.length) {
 const PORT           = process.env.PORT || 3000
 const CLIENT_ORIGIN  = process.env.CLIENT_ORIGIN || 'http://localhost:5173'
 const METERED_API_KEY   = process.env.METERED_API_KEY
+const TURN_DOMAIN       = process.env.TURN_DOMAIN
 const TURN_USERNAME     = process.env.TURN_USERNAME
 const TURN_CREDENTIAL   = process.env.TURN_CREDENTIAL
-const METERED_API_URL   = 'https://open-interviewer.metered.live/api/v1/turn/credentials'
+const METERED_API_URL   = `https://${TURN_DOMAIN}/api/v1/turn/credentials?apiKey=${encodeURIComponent(METERED_API_KEY)}`
 
 // ─── Firebase Admin SDK ──────────────────────────────────────────────────────
 const FIREBASE_SERVICE_ACCOUNT_PATH = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './serviceAccount.json'
@@ -47,6 +49,25 @@ if (!admin.apps.length) {
 
 const firestore = admin.firestore()
 
+function normalizeRole(value) {
+  return value === 'hr' || value === 'candidate' ? value : null
+}
+
+async function getVerifiedUserRole(uid, decodedToken = {}) {
+  const claimRole = normalizeRole(decodedToken.role)
+  if (claimRole) return claimRole
+  if (decodedToken.firebase?.sign_in_provider === 'anonymous') return 'candidate'
+
+  try {
+    const userDoc = await firestore.collection('users').doc(uid).get()
+    if (!userDoc.exists) return null
+    return normalizeRole(userDoc.data()?.role)
+  } catch (err) {
+    console.warn(`[Auth] Failed to load role for uid ${uid}:`, err.message)
+    return null
+  }
+}
+
 // ─── Express + Socket.io setup ──────────────────────────────────────────────
 const app    = express()
 const server = http.createServer(app)
@@ -56,6 +77,46 @@ const io     = new Server(server, {
 })
 
 app.use(cors({ origin: CLIENT_ORIGIN }))
+
+// ─── Body parser with size limits (prevents 413 Payload Too Large) ──────────
+const MAX_PAYLOAD_MB = parseInt(process.env.MAX_PAYLOAD_SIZE_MB || '10', 10)
+const MAX_PAYLOAD_BYTES = MAX_PAYLOAD_MB + 'mb'
+app.use(express.json({ limit: MAX_PAYLOAD_BYTES }))
+app.use(express.urlencoded({ limit: MAX_PAYLOAD_BYTES, extended: true }))
+console.log(`[Server] JSON body limit: ${MAX_PAYLOAD_BYTES}`)
+
+async function configureRedisAdapter() {
+  const redisUrl = process.env.REDIS_URL
+  const isProduction = process.env.NODE_ENV === 'production'
+  if (!redisUrl) {
+    if (isProduction) {
+      console.error('[FATAL] REDIS_URL is required in production for Socket.IO clustering.')
+      process.exit(1)
+    }
+    console.warn('[Socket.IO] REDIS_URL not configured. Running single-instance only.')
+    return
+  }
+
+  try {
+    const pubClient = roomStore.getRedisClient()
+    if (!pubClient) {
+      throw new Error('roomStore Redis client is unavailable')
+    }
+    const subClient = pubClient.duplicate()
+    await Promise.all([
+      pubClient.status === 'ready' ? Promise.resolve() : pubClient.connect().catch(err => {
+        if (err.message && err.message.includes('already connecting')) return
+        throw err
+      }),
+      subClient.connect(),
+    ])
+    io.adapter(createAdapter(pubClient, subClient))
+    console.log('[Socket.IO] Redis adapter enabled')
+  } catch (err) {
+    console.error('[FATAL] Failed to configure Socket.IO Redis adapter:', err.message)
+    if (isProduction) process.exit(1)
+  }
+}
 
 // ─── Rate limiting ──────────────────────────────────────────────────────────
 const turnLimiter = rateLimit({
@@ -68,11 +129,17 @@ const turnLimiter = rateLimit({
 
 async function authenticateRequest(req) {
   const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith("Bearer ")) return null
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.warn('[AUTH] Request missing or invalid Authorization header')
+    return null
+  }
   try {
-    const decoded = await admin.auth().verifyIdToken(authHeader.slice(7))
+    const token = authHeader.slice(7)
+    const decoded = await admin.auth().verifyIdToken(token)
+    console.log(`[AUTH] Token verified for uid: ${decoded.uid}`)
     return decoded
-  } catch {
+  } catch (err) {
+    console.warn('[AUTH] Token verification failed:', err.message)
     return null
   }
 }
@@ -94,7 +161,7 @@ async function getTurnCredentials() {
   try {
     const response = await fetch(METERED_API_URL, {
       method: 'GET',
-      headers: { 'X-API-Key': METERED_API_KEY },
+      headers: { 'Content-Type': 'application/json' },
     })
     if (response.ok) {
       const iceServers = await response.json()
@@ -106,8 +173,12 @@ async function getTurnCredentials() {
         }
         return iceServers
       }
+      console.warn('[TURN] Metered API returned invalid iceServers:', JSON.stringify(iceServers).substring(0, 200))
+    } else {
+      console.warn('[TURN] Metered API returned status:', response.status)
+      const errorBody = await response.text().catch(() => '')
+      console.warn('[TURN] Metered API error body:', errorBody.substring(0, 200))
     }
-    console.warn('[TURN] Metered API returned status:', response.status)
   } catch (err) {
     console.warn('[TURN] Dynamic API failed:', err.message)
   }
@@ -116,13 +187,25 @@ async function getTurnCredentials() {
 }
 
 // ─── Health check ───────────────────────────────────────────────────────────
-app.get('/health', (_, res) => res.json({ status: 'ok' }))
+app.get('/health', (_, res) => {
+  const roomStoreHealth = roomStore.getHealth()
+  if (roomStoreHealth.redisRequired && (!roomStoreHealth.redisAvailable || roomStoreHealth.redisFailed)) {
+    return res.status(503).json({
+      status: 'degraded',
+      roomStore: roomStoreHealth,
+    })
+  }
+  return res.json({
+    status: 'ok',
+    roomStore: roomStoreHealth,
+  })
+})
 
 // ─── Custom token endpoint for demo HR ──────────────────────────────────────
 const DEMO_HR_UID = process.env.DEMO_HR_UID || 'hr-admin-001'
 const DEMO_HR_SECRET = process.env.DEMO_HR_SECRET
 
-app.post('/api/auth/custom-token', express.json(), async (req, res) => {
+app.post('/api/auth/custom-token', async (req, res) => {
   const { secret } = req.body || {}
   if (!DEMO_HR_SECRET || secret !== DEMO_HR_SECRET) {
     return res.status(403).json({ error: 'Forbidden' })
@@ -138,16 +221,27 @@ app.post('/api/auth/custom-token', express.json(), async (req, res) => {
 
 // ─── TURN credential endpoints ──────────────────────────────────────────────
 app.get('/api/turn-credentials', turnLimiter, async (req, res) => {
-  const user = await authenticateRequest(req)
-  if (!user) return res.status(401).json({ error: 'Authentication required' })
-  const iceServers = await getTurnCredentials()
-  if (!iceServers) {
-    return res.status(500).json({
-      error: 'TURN service unavailable',
-      message: 'Failed to retrieve TURN credentials. Please try again later.',
-    })
+  try {
+    const user = await authenticateRequest(req)
+    if (!user) {
+      console.warn('[TURN] Unauthenticated request — returning 401')
+      return res.status(401).json({ error: 'Authentication required' })
+    }
+    console.log('[TURN] Serving credentials to uid:', user.uid)
+    const iceServers = await getTurnCredentials()
+    if (!iceServers) {
+      console.error('[TURN] No ICE servers available from Metered API')
+      return res.status(500).json({
+        error: 'TURN service unavailable',
+        message: 'Failed to retrieve TURN credentials. Please try again later.',
+      })
+    }
+    console.log('[TURN] Returning', iceServers.length, 'ICE servers to uid:', user.uid)
+    res.json({ iceServers, expiresAt: turnCredentialsCache.expiresAt })
+  } catch (err) {
+    console.error('[TURN] Unexpected error:', err.message)
+    res.status(500).json({ error: 'TURN service unavailable' })
   }
-  res.json({ iceServers, expiresAt: turnCredentialsCache.expiresAt })
 })
 
 app.get('/api/turn-credentials/validate', (req, res) => {
@@ -169,6 +263,104 @@ app.post('/api/turn-credentials/refresh', turnLimiter, async (req, res) => {
     return res.status(500).json({ error: 'Failed to refresh credentials' })
   }
   res.json({ success: true, expiresAt: turnCredentialsCache.expiresAt })
+})
+
+// ─── Bug Report endpoint (with chunking for AI processing) ──────────────────
+const BUG_REPORT_MAX_CHUNK = 8000 // characters per chunk for AI model context window
+
+app.post('/api/bug-report', turnLimiter, async (req, res) => {
+  try {
+    const user = await authenticateRequest(req)
+    if (!user) {
+      return res.status(401).json({ error: 'Authentication required' })
+    }
+
+    const { logs, errorStack, userAction, sessionId, pageUrl, userAgent } = req.body
+
+    if (!logs && !errorStack && !userAction) {
+      return res.status(400).json({ error: 'At least one of logs, errorStack, or userAction is required' })
+    }
+
+    // Build full text from report fields
+    const parts = []
+    if (userAction)  parts.push(`User Action: ${userAction}`)
+    if (errorStack)   parts.push(`Error Stack: ${errorStack}`)
+    if (logs)         parts.push(`Logs: ${logs}`)
+    if (pageUrl)      parts.push(`Page URL: ${pageUrl}`)
+    if (userAgent)    parts.push(`User Agent: ${userAgent}`)
+    if (sessionId)    parts.push(`Session ID: ${sessionId}`)
+
+    const fullText = parts.join('\n\n')
+
+    // If within single-chunk limit, process directly
+    if (fullText.length <= BUG_REPORT_MAX_CHUNK) {
+      // Store in Firestore for tracking (non-blocking)
+      try {
+        const reportId = `bug-${Date.now()}-${user.uid.slice(0, 8)}`
+        await firestore.collection('bugReports').doc(reportId).set({
+          reportId,
+          uid: user.uid,
+          logs: logs || null,
+          errorStack: errorStack || null,
+          userAction: userAction || null,
+          sessionId: sessionId || null,
+          pageUrl: pageUrl || null,
+          userAgent: userAgent || null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          truncated: false,
+        })
+      } catch (dbErr) {
+        console.warn('[BugReport] Firestore save failed:', dbErr.message)
+      }
+
+      console.log(`[BugReport] Report received from uid: ${user.uid} (${fullText.length} chars)`)
+      return res.json({
+        received: true,
+        message: 'Bug report submitted successfully.',
+        characterCount: fullText.length,
+        truncated: false,
+      })
+    }
+
+    // If text exceeds chunk limit, process first chunk and note truncation
+    const firstChunk = fullText.slice(0, BUG_REPORT_MAX_CHUNK)
+    const totalChunks = Math.ceil(fullText.length / BUG_REPORT_MAX_CHUNK)
+
+    // Store truncated report in Firestore (non-blocking)
+    try {
+      const reportId = `bug-${Date.now()}-${user.uid.slice(0, 8)}`
+      await firestore.collection('bugReports').doc(reportId).set({
+        reportId,
+        uid: user.uid,
+        logs: (logs || '').slice(0, BUG_REPORT_MAX_CHUNK),
+        errorStack: (errorStack || '').slice(0, BUG_REPORT_MAX_CHUNK),
+        userAction: userAction || null,
+        sessionId: sessionId || null,
+        pageUrl: pageUrl || null,
+        userAgent: userAgent || null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        truncated: true,
+        totalChunks,
+        originalLength: fullText.length,
+      })
+    } catch (dbErr) {
+      console.warn('[BugReport] Firestore save failed:', dbErr.message)
+    }
+
+    console.log(`[BugReport] Report received from uid: ${user.uid} — truncated ${fullText.length} chars to ${firstChunk.length} (chunk 1/${totalChunks})`)
+
+    res.json({
+      received: true,
+      message: `Bug report submitted. Large payload truncated to first chunk (${totalChunks} total chunks).`,
+      characterCount: fullText.length,
+      processedChars: firstChunk.length,
+      truncated: true,
+      totalChunks,
+    })
+  } catch (err) {
+    console.error('[BugReport] Error processing report:', err.message)
+    res.status(500).json({ error: 'Failed to process bug report' })
+  }
 })
 
 // ─── Room state (backed by roomStore — Redis + in-memory cache) ─────────────
@@ -237,15 +429,10 @@ io.use(async (socket, next) => {
     const decoded = await admin.auth().verifyIdToken(token)
     socket.data.uid = decoded.uid
     socket.data.email = decoded.email || null
+    socket.data.decodedToken = decoded
+    socket.data.userRole = await getVerifiedUserRole(decoded.uid, decoded)
 
-    const userDoc = await firestore.collection('users').doc(decoded.uid).get()
-    if (userDoc.exists) {
-      socket.data.userRole = userDoc.data().role || null
-    } else {
-      console.warn(`[Auth] UID ${decoded.uid} not found in Firestore users collection`)
-      socket.data.userRole = null
-    }
-
+    console.log(`[Auth] Socket ${socket.id} authenticated as uid: ${decoded.uid}, role: ${socket.data.userRole}`)
     next()
   } catch (err) {
     console.warn(`[Auth] Socket ${socket.id} rejected: invalid token (${err.message})`)
@@ -257,6 +444,9 @@ io.use(async (socket, next) => {
 io.on('connection', (socket) => {
   console.log(`[+] Socket connected: ${socket.id} (uid: ${socket.data.uid})`)
 
+  // Track which rooms this socket is in (for cleanup on disconnect)
+  socket.data.joinedRooms = new Set()
+
   // ── Join room ──────────────────────────────────────────────────────────
   socket.on('join-room', async ({ roomId, userId, role }) => {
     if (!roomId || typeof roomId !== 'string' || !roomId.trim()) {
@@ -264,28 +454,23 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Invalid roomId' })
       return
     }
-    if (!userId || typeof userId !== 'string' || !userId.trim()) {
-      console.warn(`[Signaling] join-room rejected: invalid userId from ${socket.id}`)
-      socket.emit('error', { message: 'Invalid userId' })
-      return
-    }
-    if (!role || !['candidate', 'hr'].includes(role)) {
-      console.warn(`[Signaling] join-room rejected: invalid role "${role}" from ${socket.id}`)
-      socket.emit('error', { message: 'Invalid role. Must be "candidate" or "hr".' })
+
+    const verifiedRole = await getVerifiedUserRole(socket.data.uid, socket.data.decodedToken)
+    if (!verifiedRole) {
+      console.warn(`[Signaling] join-room rejected: role cannot be verified for uid ${socket.data.uid}`)
+      socket.emit('error', { message: 'Authenticated user role is not verified.' })
       return
     }
 
-    if (socket.data.userRole && socket.data.userRole !== role) {
-      console.warn(`[Signaling] join-room rejected: role mismatch for uid ${socket.data.uid} (claimed: ${role}, actual: ${socket.data.userRole})`)
+    const requestedRole = role === 'hr' || role === 'candidate' ? role : null
+    if (requestedRole && requestedRole !== verifiedRole) {
+      console.warn(`[Signaling] join-room rejected: role mismatch for uid ${socket.data.uid} (claimed: ${requestedRole}, actual: ${verifiedRole})`)
       socket.emit('error', { message: 'Role mismatch with authenticated user.' })
       return
     }
 
-    if (userId !== socket.data.uid) {
-      console.warn(`[Signaling] join-room rejected: userId mismatch for uid ${socket.data.uid} (claimed: ${userId})`)
-      socket.emit('error', { message: 'User ID does not match authenticated user.' })
-      return
-    }
+    const effectiveRole = verifiedRole
+    const effectiveUserId = socket.data.uid
 
     socket.join(roomId)
     const resolvedRoomId = await resolveRoomId(roomId)
@@ -295,51 +480,79 @@ io.on('connection', (socket) => {
 
     socket.data.roomId = resolvedRoomId
     socket.data.joinedRoomId = roomId
-    socket.data.userId = userId
-    socket.data.role = role
+    socket.data.userId = effectiveUserId
+    socket.data.role = effectiveRole
 
     addSocketToRoom(roomId, socket.id)
     if (resolvedRoomId !== roomId) {
       addSocketToRoom(resolvedRoomId, socket.id)
     }
 
-    const room = await roomStore.getOrCreateRoom(resolvedRoomId)
+    // Track rooms for disconnect cleanup
+    socket.data.joinedRooms.add(roomId)
+    if (resolvedRoomId !== roomId) {
+      socket.data.joinedRooms.add(resolvedRoomId)
+    }
 
-    if (role === 'candidate') {
-      if (room.candidateLocked && room.candidate && room.candidate !== socket.id) {
-        console.warn(`[Signaling] [room:${resolvedRoomId}] REJECTED duplicate candidate: ${userId}`)
+    // Use atomic addParticipant to avoid race conditions
+    const room = await roomStore.addParticipant(resolvedRoomId, socket.id, effectiveRole, effectiveUserId)
+
+    if (room?.rejected) {
+      socket.emit('room-locked', { message: room.message || 'This interview room already has an active candidate.' })
+      socket.leave(roomId)
+      if (resolvedRoomId !== roomId) socket.leave(resolvedRoomId)
+      removeSocketFromRoom(roomId, socket.id)
+      if (resolvedRoomId !== roomId) removeSocketFromRoom(resolvedRoomId, socket.id)
+      socket.data.joinedRooms.delete(roomId)
+      if (resolvedRoomId !== roomId) socket.data.joinedRooms.delete(resolvedRoomId)
+      return
+    }
+
+    // Check if candidate is locked out (another candidate already in room)
+    if (effectiveRole === 'candidate') {
+      // Re-fetch room to check lock status (addParticipant may have been overwritten by another concurrent join)
+      const currentRoom = await roomStore.getRoom(resolvedRoomId)
+      if (currentRoom && currentRoom.candidate && currentRoom.candidate !== socket.id && currentRoom.candidateLocked) {
+        console.warn(`[Signaling] [room:${resolvedRoomId}] REJECTED duplicate candidate: ${effectiveUserId}`)
         socket.emit('room-locked', { message: 'This interview room already has an active candidate. Each link supports only one session at a time.' })
         socket.leave(roomId)
         if (resolvedRoomId !== roomId) socket.leave(resolvedRoomId)
         removeSocketFromRoom(roomId, socket.id)
         if (resolvedRoomId !== roomId) removeSocketFromRoom(resolvedRoomId, socket.id)
+        socket.data.joinedRooms.delete(roomId)
+        if (resolvedRoomId !== roomId) socket.data.joinedRooms.delete(resolvedRoomId)
         return
       }
-      room.candidate = socket.id
-      room.candidateLocked = true
-    } else if (role === 'hr') {
-      room.hr = socket.id
-      room.observers.add(socket.id)
     }
 
-    await roomStore.setRoom(resolvedRoomId, room)
+    console.log(`[Signaling] [room:${resolvedRoomId}] ${effectiveRole} joined: ${effectiveUserId} (alias: ${roomId})`)
 
-    console.log(`[Signaling] [room:${resolvedRoomId}] ${role} joined: ${userId} (alias: ${roomId})`)
-
-    const peerJoinedPayload = { userId, role, socketId: socket.id }
+    const peerJoinedPayload = { userId: effectiveUserId, role: effectiveRole, socketId: socket.id }
     socket.to(roomId).emit('peer-joined', peerJoinedPayload)
     if (resolvedRoomId !== roomId) {
       socket.to(resolvedRoomId).emit('peer-joined', peerJoinedPayload)
     }
+
+    const finalRoom = await roomStore.getRoom(resolvedRoomId)
     socket.emit('room-state', {
-      hasCandidate: !!room.candidate,
-      observerCount: room.observers.size,
+      hasCandidate: !!finalRoom?.candidate,
+      observerCount: finalRoom?.observers?.size || 0,
     })
   })
 
   // ── Register observer alias ─────────────────────────────────────────────
   socket.on('register-observer-alias', async ({ observerRoomId, sourceRoomId }) => {
     if (!observerRoomId || !sourceRoomId || observerRoomId === sourceRoomId) return
+    if (socket.data.role !== 'candidate') {
+      console.warn(`[Signaling] register-observer-alias rejected: non-candidate role "${socket.data.role}" from ${socket.id}`)
+      socket.emit('error', { message: 'Only the candidate may register an observer alias.' })
+      return
+    }
+    if (!isSocketInRoom(sourceRoomId, socket.id)) {
+      console.warn(`[Signaling] register-observer-alias rejected: socket ${socket.id} is not in source room ${sourceRoomId}`)
+      socket.emit('error', { message: 'Not a participant in source room.' })
+      return
+    }
 
     const sourceRoom = await roomStore.getRoom(sourceRoomId)
     if (!sourceRoom) {
@@ -386,6 +599,12 @@ io.on('connection', (socket) => {
       console.warn(`[Signaling] Event rejected: room ${resolvedRoomId} does not exist`)
       return null
     }
+    // Validate socket is a participant in the room (Error 15 fix)
+    if (!isSocketInRoom(resolvedRoomId, socket.id) && !isSocketInRoom(roomId, socket.id)) {
+      console.warn(`[Signaling] Event rejected: socket ${socket.id} is not in room ${resolvedRoomId}`)
+      socket.emit('error', { message: 'Not a participant in this room.' })
+      return null
+    }
     return { resolvedRoomId, room }
   }
 
@@ -401,6 +620,8 @@ io.on('connection', (socket) => {
     if (room.candidate) {
       console.log(`[Signaling] [room:${resolvedRoomId}] HR requested stream from candidate (alias: ${roomId})`)
       io.to(room.candidate).emit('send-stream', { to: socket.id })
+    } else {
+      console.warn(`[Signaling] [room:${resolvedRoomId}] HR requested stream but no candidate in room`)
     }
   })
 
@@ -416,7 +637,7 @@ io.on('connection', (socket) => {
       console.warn(`[Signaling] offer rejected: target ${to} not in same room as ${socket.id}`)
       return
     }
-    console.log(`[Signaling] Relay offer from ${socket.id} to ${to}`)
+    console.log(`[Signaling] Relay offer from ${socket.id} (role: ${socket.data.role}) to ${to}`)
     io.to(to).emit('offer', { from: socket.id, offer })
   })
 
@@ -431,10 +652,11 @@ io.on('connection', (socket) => {
       console.warn(`[Signaling] answer rejected: target ${to} not in same room as ${socket.id}`)
       return
     }
-    console.log(`[Signaling] Relay answer from ${socket.id} to ${to}`)
+    console.log(`[Signaling] Relay answer from ${socket.id} (role: ${socket.data.role}) to ${to}`)
     io.to(to).emit('answer', { from: socket.id, answer })
   })
 
+  // Error 9 fix: ICE candidates are sent peer-to-peer (to a specific socket), not broadcast
   socket.on('ice-candidate', ({ to, candidate }) => {
     if (!to || !candidate) return
     if (!checkSocketRateLimit(socket.id, 'ice-candidate')) {
@@ -685,41 +907,37 @@ io.on('connection', (socket) => {
 
   // ── Disconnect ─────────────────────────────────────────────────────────
   socket.on('disconnect', async () => {
-    const { roomId, role } = socket.data
-    if (!roomId) return
+    const { roomId, role, joinedRoomId, joinedRooms } = socket.data
+    if (!roomId && !joinedRooms?.size) return
 
-    const room = await roomStore.getRoom(roomId)
-    if (!room) return
+    // Clean up all rooms this socket was part of (Error 8 fix)
+    const roomsToClean = joinedRooms?.size
+      ? [...joinedRooms]
+      : [roomId, joinedRoomId].filter(Boolean)
 
-    if (role === 'candidate' && room.candidate === socket.id) {
-      room.candidate = null
-      room.candidateLocked = false
-    }
-    if (role === 'hr' && room.hr === socket.id) {
-      room.hr = null
-    }
-    room.observers.delete(socket.id)
+    for (const rId of roomsToClean) {
+      try {
+        const room = await roomStore.removeParticipant(rId, socket.id)
+        if (!room) continue
 
-    const joinedRoomId = socket.data.joinedRoomId
-    removeSocketFromRoom(roomId, socket.id)
-    if (joinedRoomId && joinedRoomId !== roomId) {
-      removeSocketFromRoom(joinedRoomId, socket.id)
+        // If room is empty, delete it
+        if (!room.candidate && !room.hr && room.observers.size === 0) {
+          await roomStore.deleteRoom(rId)
+          await roomStore.deleteAliasesBySourceRoom(rId)
+          roomSockets.delete(rId)
+        }
+
+        // Notify others in the room
+        const peerLeftPayload = { socketId: socket.id, role }
+        socket.to(rId).emit('peer-left', peerLeftPayload)
+      } catch (err) {
+        console.warn(`[Disconnect] Error cleaning room ${rId}:`, err.message)
+      }
+
+      removeSocketFromRoom(rId, socket.id)
     }
 
-    const peerLeftPayload = { socketId: socket.id, role }
-    socket.to(roomId).emit('peer-left', peerLeftPayload)
-    if (joinedRoomId && joinedRoomId !== roomId) {
-      socket.to(joinedRoomId).emit('peer-left', peerLeftPayload)
-    }
     console.log(`[-] Socket disconnected: ${socket.id} (room: ${roomId}, joined: ${joinedRoomId}, role: ${role})`)
-
-    if (!room.candidate && !room.hr && room.observers.size === 0) {
-      await roomStore.deleteRoom(roomId)
-      await roomStore.deleteAliasesBySourceRoom(roomId)
-      roomSockets.delete(roomId)
-    } else {
-      await roomStore.setRoom(roomId, room)
-    }
 
     for (const key of socketRateLimits.keys()) {
       if (key.startsWith(socket.id + ":")) {
@@ -730,7 +948,9 @@ io.on('connection', (socket) => {
 })
 
 // ─── Start server ───────────────────────────────────────────────────────────
-server.listen(PORT, () => {
-  console.log(`🚀 Signaling server running on http://localhost:${PORT}`)
-  console.log(`   CORS origin: ${CLIENT_ORIGIN}`)
+configureRedisAdapter().then(() => {
+  server.listen(PORT, () => {
+    console.log(`🚀 Signaling server running on http://localhost:${PORT}`)
+    console.log(`   CORS origin: ${CLIENT_ORIGIN}`)
+  })
 })

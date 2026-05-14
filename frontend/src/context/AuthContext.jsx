@@ -7,33 +7,19 @@ import {
 } from 'firebase/auth'
 import { doc, setDoc, getDoc } from 'firebase/firestore'
 import { auth, db } from '../firebase'
-import { getCurrentRoutePath } from '../lib/runtimeConfig'
 
 const AuthContext = createContext(null)
 
-const ROLE_CACHE_KEY = '__ai_interviewer_roles__'
-
-function readRoleCache() {
-  try {
-    return JSON.parse(localStorage.getItem(ROLE_CACHE_KEY) || '{}')
-  } catch {
-    return {}
-  }
-}
-
-function writeRoleCache(cache) {
-  localStorage.setItem(ROLE_CACHE_KEY, JSON.stringify(cache))
-}
-
-function cacheUserRole(uid, role) {
-  const cache = readRoleCache()
-  cache[uid] = role
-  writeRoleCache(cache)
-}
-
-function getCachedUserRole(uid) {
-  const cache = readRoleCache()
-  return uid ? cache[uid] || null : null
+async function fetchUserRole(uid, timeoutMs = 3000) {
+  if (!uid) return null
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Role lookup timed out')), timeoutMs)
+  )
+  const snap = await Promise.race([
+    getDoc(doc(db, 'users', uid)),
+    timeoutPromise,
+  ])
+  return snap.exists() ? snap.data().role || null : null
 }
 
 export function AuthProvider({ children }) {
@@ -43,32 +29,28 @@ export function AuthProvider({ children }) {
 
   async function signup(email, password, role) {
     const cred = await createUserWithEmailAndPassword(auth, email, password)
-    cacheUserRole(cred.user.uid, role)
     try {
       await setDoc(doc(db, 'users', cred.user.uid), {
         email,
         role,
         createdAt: new Date().toISOString(),
       })
+      setUserRole(await fetchUserRole(cred.user.uid))
     } catch (error) {
-      console.warn('Signup profile write failed; falling back to cached role.', error)
+      console.warn('Signup profile write failed; role remains unverified.', error)
+      setUserRole(null)
     }
     setCurrentUser(cred.user)
-    setUserRole(role)
     return cred
   }
 
   async function login(email, password) {
     const cred = await signInWithEmailAndPassword(auth, email, password)
-    let role = getCachedUserRole(cred.user.uid) || 'candidate'
+    let role = null
     try {
-      const snap = await getDoc(doc(db, 'users', cred.user.uid))
-      if (snap.exists()) {
-        role = snap.data().role
-        cacheUserRole(cred.user.uid, role)
-      }
+      role = await fetchUserRole(cred.user.uid)
     } catch (error) {
-      console.warn('Login role fetch failed; falling back to cached role.', error)
+      console.warn('Login role fetch failed; role remains unverified.', error)
     }
     setUserRole(role)
     return { cred, role }
@@ -87,34 +69,13 @@ export function AuthProvider({ children }) {
     const unsub = onAuthStateChanged(auth, async (user) => {
       clearTimeout(timer)
       setCurrentUser(user)
+      setUserRole(null)
       if (user) {
-        const cachedRole = getCachedUserRole(user.uid)
-        if (cachedRole) setUserRole(cachedRole)
         try {
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Timeout')), 3000)
-          )
-          const snap = await Promise.race([
-            getDoc(doc(db, 'users', user.uid)),
-            timeoutPromise,
-          ])
-          if (snap.exists()) {
-            const role = snap.data().role
-            cacheUserRole(user.uid, role)
-            setUserRole(role)
-          } else if (!cachedRole) {
-            setUserRole('candidate')
-          }
+          setUserRole(await fetchUserRole(user.uid))
         } catch (e) {
-          console.warn('Auth role fetch error (likely offline):', e)
-          const path = getCurrentRoutePath()
-          if (cachedRole) {
-            setUserRole(cachedRole)
-          } else if (path.startsWith('/hr') || path.startsWith('/observe')) {
-            setUserRole('hr')
-          } else {
-            setUserRole('candidate')
-          }
+          console.warn('Auth role fetch error:', e)
+          setUserRole(null)
         }
       } else {
         setUserRole(null)

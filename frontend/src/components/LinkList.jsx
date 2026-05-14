@@ -10,6 +10,7 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useToast } from './Toast'
 import { apiUrl } from '../lib/runtimeConfig'
+import { authFetch } from '../utils/api'
 
 export default function LinkList({ userId, mode = 'hr', refresh = 0 }) {
   const toast = useToast()
@@ -25,7 +26,7 @@ export default function LinkList({ userId, mode = 'hr', refresh = 0 }) {
   async function fetchLinks() {
     setLoading(true)
     try {
-      const res = await fetch(apiUrl(`/api/links?userId=${encodeURIComponent(userId)}`))
+      const res = await authFetch(apiUrl(`/api/links?userId=${encodeURIComponent(userId)}`))
       if (res.ok) {
         const data = await res.json()
         setLinks(data.links || [])

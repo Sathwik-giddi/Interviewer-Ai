@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore'
 import { db } from '../firebase'
 import { apiUrl, interviewUrl, observerUrl } from '../lib/runtimeConfig'
+import { safeFetch } from '../utils/api'
 
 export default function HRDashboard() {
   const { currentUser } = useAuth()
@@ -103,7 +104,7 @@ export default function HRDashboard() {
     setAutoGenerating(true)
     setGeneratedCampaign(null)
     try {
-      const res = await fetch(apiUrl('/api/auto-generate-campaign'), {
+      const res = await safeFetch(apiUrl('/api/auto-generate-campaign'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ role_type: autoRole, title: autoTitle || undefined, experience_level: autoExp }),
@@ -135,10 +136,10 @@ export default function HRDashboard() {
         const fd = new FormData()
         fd.append('resume', resumeFile)
         fd.append('job_description', form.jobDescription)
-        const res = await fetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd })
+        const res = await safeFetch(apiUrl('/api/parse-resume'), { method: 'POST', body: fd }, { skipValidation: true })
         if (res.ok) { const data = await res.json(); parsedSkills = data.skills?.join(', ') || form.skills }
       }
-      const poolRes = await fetch(apiUrl('/api/generate-question-pool'), {
+      const poolRes = await safeFetch(apiUrl('/api/generate-question-pool'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ job_title: form.title, job_description: form.jobDescription, required_skills: parsedSkills, experience_years: form.experienceYears }),

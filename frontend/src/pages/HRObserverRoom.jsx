@@ -12,15 +12,27 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../components/Toast'
 import { io } from 'socket.io-client'
-import { apiUrl, getBackendBaseUrl, getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
+import { getSocketServerUrl, interviewUrl } from '../lib/runtimeConfig'
 import { getSocketAuth } from '../lib/socketAuth'
 import { buildRtcConfigAsync } from '../lib/webrtcConfig'
 import { getSelectedCandidatePairInfo } from '../lib/webrtcConfig'
 
 const SIGNAL  = getSocketServerUrl()
-const BACKEND = getBackendBaseUrl()
 const STREAM_RETRY_INTERVAL_MS = 2500
 const STREAM_RETRY_LIMIT = 6
+
+function isValidIceCandidate(candidate) {
+  return Boolean(
+    candidate &&
+    typeof candidate === 'object' &&
+    ('candidate' in candidate) &&
+    (typeof candidate.candidate === 'string' || candidate.candidate === null)
+  )
+}
+
+function isValidSessionDescription(description) {
+  return Boolean(description?.type && description?.sdp)
+}
 
 export default function HRObserverRoom() {
   const { campaignId } = useParams()
@@ -32,6 +44,7 @@ export default function HRObserverRoom() {
   const [connected, setConnected]             = useState(false)
   const [candidatePresent, setCandidatePresent] = useState(false)
   const [streamActive, setStreamActive]       = useState(false)
+  const [webrtcError, setWebrtcError]         = useState(null)
 
   // HR Controls
   const [speaking, setSpeaking]               = useState(false)
@@ -187,14 +200,21 @@ export default function HRObserverRoom() {
     let cancelled = false
 
     async function connectSocket() {
-      const authOpts = await getSocketAuth(currentUser)
+      let authOpts
+      try {
+        authOpts = await getSocketAuth(currentUser)
+      } catch (err) {
+        console.error('[Socket] Auth failed:', err.message)
+        setWebrtcError('Authentication failed. Please refresh the page.')
+        return
+      }
       if (cancelled) return
-      socket = io(SIGNAL, { transports: ['websocket', 'polling'], reconnection: true, auth: authOpts })
+      socket = io(SIGNAL, { transports: ['websocket', 'polling'], reconnection: true, auth: { token: authOpts.token } })
       socketRef.current = socket
 
       socket.on('connect', () => {
         setConnected(true)
-        socket.emit('join-room', { roomId: campaignId, userId: currentUser.uid, role: 'hr' })
+        socket.emit('join-room', { roomId: campaignId, role: 'hr' })
         addLog('system', 'Connected as HR observer.')
       })
       socket.on('disconnect', () => { setConnected(false); addLog('system', 'Disconnected.') })
@@ -204,7 +224,7 @@ export default function HRObserverRoom() {
       })
 
       // Candidate
-      socket.on('peer-joined', ({ role }) => {
+      socket.on('peer-joined', ({ role } = {}) => {
         if (role === 'candidate') {
           setCandidatePresent(true)
           addLog('system', 'Candidate joined.')
@@ -212,14 +232,14 @@ export default function HRObserverRoom() {
           requestCandidateStream({ resetAttempts: true })
         }
       })
-      socket.on('room-state', ({ hasCandidate }) => {
+      socket.on('room-state', ({ hasCandidate } = {}) => {
         setCandidatePresent(hasCandidate)
         if (hasCandidate) {
           addLog('system', 'Candidate in room.')
           requestCandidateStream({ resetAttempts: true })
         }
       })
-      socket.on('peer-left', ({ role }) => {
+      socket.on('peer-left', ({ role } = {}) => {
         if (role === 'candidate') {
           setCandidatePresent(false)
           setStreamActive(false)
@@ -230,21 +250,35 @@ export default function HRObserverRoom() {
       })
 
       // WebRTC
-      socket.on('offer', async ({ from, offer }) => {
+      socket.on('offer', async ({ from, offer } = {}) => {
+        if (typeof from !== 'string' || !isValidSessionDescription(offer)) return
         waitingForOfferRef.current = false
-        const pc = await createPC(from)
-        await pc.setRemoteDescription(new RTCSessionDescription(offer))
-        for (const c of pendingCandidates.current) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
-        pendingCandidates.current = []
-        const answer = await pc.createAnswer()
-        await pc.setLocalDescription(answer)
-        socket.emit('answer', { to: from, answer })
+        try {
+          const pc = await createPC(from)
+          await pc.setRemoteDescription(new RTCSessionDescription(offer))
+          for (const c of pendingCandidates.current) {
+            if (isValidIceCandidate(c)) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(() => {})
+          }
+          pendingCandidates.current = []
+          const answer = await pc.createAnswer()
+          await pc.setLocalDescription(answer)
+          socket.emit('answer', { to: from, answer })
+        } catch (err) {
+          console.error('[WebRTC] Failed to process candidate offer:', err)
+          setWebrtcError('Candidate video failed to connect. Retrying...')
+          waitingForOfferRef.current = false
+        }
       })
-      socket.on('answer', async ({ answer }) => {
-        if (peerRef.current?.signalingState === 'have-local-offer')
+      socket.on('answer', async ({ answer } = {}) => {
+        if (!isValidSessionDescription(answer) || peerRef.current?.signalingState !== 'have-local-offer') return
+        try {
           await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer))
+        } catch (err) {
+          console.warn('[WebRTC] Failed to set remote answer:', err)
+        }
       })
-      socket.on('ice-candidate', async ({ candidate }) => {
+      socket.on('ice-candidate', async ({ candidate } = {}) => {
+        if (!isValidIceCandidate(candidate)) return
         if (peerRef.current?.remoteDescription) await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {})
         else pendingCandidates.current.push(candidate)
       })
@@ -253,8 +287,8 @@ export default function HRObserverRoom() {
       socket.on('hr-speak-accepted', () => { setSpeaking(true); setSpeakRequested(false); enableMic(); addLog('system', 'Speaking to candidate — AI paused.') })
 
       // Candidate's WebRTC answer for HR's two-way media offer
-      socket.on('candidate-answer', async ({ from, answer }) => {
-        if (hrSpeakPcRef.current?.signalingState === 'have-local-offer') {
+      socket.on('candidate-answer', async ({ from, answer } = {}) => {
+        if (typeof from === 'string' && isValidSessionDescription(answer) && hrSpeakPcRef.current?.signalingState === 'have-local-offer') {
           try {
             await hrSpeakPcRef.current.setRemoteDescription(new RTCSessionDescription(answer))
             console.log('[WebRTC] HR received candidate answer — two-way connection establishing')
@@ -265,8 +299,8 @@ export default function HRObserverRoom() {
       })
 
       // ICE candidates from candidate for the HR speak peer connection
-      socket.on('hr-ice-candidate', async ({ candidate }) => {
-        if (hrSpeakPcRef.current && candidate) {
+      socket.on('hr-ice-candidate', async ({ candidate } = {}) => {
+        if (hrSpeakPcRef.current && isValidIceCandidate(candidate)) {
           try {
             await hrSpeakPcRef.current.addIceCandidate(new RTCIceCandidate(candidate))
           } catch (err) {
@@ -276,10 +310,20 @@ export default function HRObserverRoom() {
       })
 
       // Interview state relay
-      socket.on('interview-state', (data) => setInterviewState(data))
-      socket.on('candidate-typing', (data) => { setCandidateAnswer(data.currentAnswer || ''); setAnswerType(data.answerType || 'text') })
-      socket.on('ai-speaking', (data) => addLog('ai', `Asking: "${data.question.substring(0, 80)}${data.question.length > 80 ? '…' : ''}"`))
-      socket.on('answer-submitted', (data) => {
+      socket.on('interview-state', (data = {}) => {
+        if (!data || typeof data !== 'object') return
+        setInterviewState(data)
+      })
+      socket.on('candidate-typing', (data = {}) => {
+        setCandidateAnswer(typeof data.currentAnswer === 'string' ? data.currentAnswer : '')
+        setAnswerType(typeof data.answerType === 'string' ? data.answerType : 'text')
+      })
+      socket.on('ai-speaking', (data = {}) => {
+        const question = typeof data.question === 'string' ? data.question : ''
+        if (question) addLog('ai', `Asking: "${question.substring(0, 80)}${question.length > 80 ? '…' : ''}"`)
+      })
+      socket.on('answer-submitted', (data = {}) => {
+        if (typeof data.qIndex !== 'number') return
         setSubmittedAnswers(prev => [...prev, { qIndex: data.qIndex, answer: data.answer }])
         setCandidateAnswer('')
         addLog('candidate', `Answered Q${data.qIndex + 1}`)
@@ -360,10 +404,42 @@ export default function HRObserverRoom() {
   async function createPC(remotePeerId) {
     peerRef.current?.close()
     remotePeerIdRef.current = remotePeerId
-    const config = await buildRtcConfigAsync()
+
+    // Error 3/10 fix: Await ICE servers before creating RTCPeerConnection
+    let config
+    try {
+      config = await buildRtcConfigAsync()
+      console.log('[WebRTC] HR createPC: ICE servers resolved, servers=', config.iceServers?.length)
+    } catch (err) {
+      console.error('[WebRTC] HR createPC: buildRtcConfigAsync failed:', err.message)
+      setWebrtcError('Failed to get TURN credentials. Cross-network video may not work.')
+      config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+    }
+
     const pc = new RTCPeerConnection(config)
     peerRef.current = pc
-    pc.onicecandidate = ({ candidate }) => { if (candidate) socketRef.current?.emit('ice-candidate', { to: remotePeerId, candidate }) }
+    setWebrtcError(null)
+
+    // Error 9 fix: Send ICE candidates to specific peer (not broadcast)
+    pc.onicecandidate = ({ candidate }) => {
+      if (candidate) {
+        console.log('[ICE] HR candidate for', remotePeerId, ':', candidate.candidate?.substring(0, 50))
+        socketRef.current?.emit('ice-candidate', { to: remotePeerId, candidate })
+      }
+    }
+
+    // ICE logging
+    pc.oniceconnectionstatechange = () => {
+      console.log('[ICE] HR connection state:', pc.iceConnectionState)
+      if (pc.iceConnectionState === 'failed') {
+        console.error('[ICE] HR connection failed for peer', remotePeerId)
+        setWebrtcError('Connection failed. Attempting retry...')
+      }
+    }
+    pc.onicegatheringstatechange = () => {
+      console.log('[ICE] HR gathering state:', pc.iceGatheringState)
+    }
+
     pc.ontrack = ({ streams }) => {
       if (remoteVideoRef.current && streams[0]) {
         const [videoTrack] = streams[0].getVideoTracks()
@@ -376,10 +452,19 @@ export default function HRObserverRoom() {
       }
     }
     pc.onconnectionstatechange = () => {
+      console.log('[WebRTC] HR connection state:', pc.connectionState)
       if (pc.connectionState === 'connected') {
-        setStreamActive(true)
-        streamRetryCountRef.current = 0
-        waitingForOfferRef.current = false
+        // Bug #4 fix: Only set streamActive if we actually have video tracks
+        const receivers = pc.getReceivers()
+        const hasVideo = receivers.some(r => r.track && r.track.kind === 'video' && r.track.readyState === 'live')
+        if (hasVideo) {
+          setStreamActive(true)
+          streamRetryCountRef.current = 0
+          waitingForOfferRef.current = false
+          setWebrtcError(null)
+        } else {
+          console.warn('[WebRTC] HR connected but no video tracks yet')
+        }
       }
       if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
         setStreamActive(false)
@@ -487,22 +572,6 @@ export default function HRObserverRoom() {
     socketRef.current?.emit('hr-custom-question', { roomId: campaignId, question: hrQuestion, from: 'HR' })
     addLog('hr', `Custom question: "${hrQuestion}"`)
 
-    // Generate TTS for the question via backend so candidate hears it
-    try {
-      const res = await fetch(apiUrl('/api/text-to-speech'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: hrQuestion }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        if (data.audio_url) {
-          // Send audio URL to candidate
-          socketRef.current?.emit('hr-question-audio', { roomId: campaignId, audioUrl: `${BACKEND}${data.audio_url}`, question: hrQuestion })
-        }
-      }
-    } catch { /* TTS failed — candidate will see text */ }
-
     setHrQuestion('')
     setSendingQuestion(false)
     toast.info('Question sent to candidate.')
@@ -539,6 +608,7 @@ export default function HRObserverRoom() {
           <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
           {speaking && <div style={S.liveOverlay}>🎙 YOU ARE LIVE — AI PAUSED</div>}
           {streamActive && !speaking && <div style={{ position: 'absolute', top: '8px', right: '8px', background: 'rgba(34,197,94,0.9)', color: '#fff', padding: '4px 8px', fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em' }}>● LIVE</div>}
+          {webrtcError && !streamActive && <div style={{ position: 'absolute', bottom: '8px', left: '8px', right: '8px', background: 'rgba(239,68,68,0.9)', color: '#fff', padding: '6px 10px', fontSize: '11px', borderRadius: '4px' }}>{webrtcError}</div>}
         </div>
 
         {/* Candidate info */}

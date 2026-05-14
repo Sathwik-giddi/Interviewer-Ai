@@ -24,6 +24,7 @@ _PROFILE_CACHE: dict[str, dict[str, Any]] = {}
 _SUBMISSION_CACHE: dict[str, dict[str, Any]] = {}
 _ACTION_CACHE: list[dict[str, Any]] = []
 _LINK_CACHE: dict[str, dict[str, Any]] = {}
+_TOKEN_TTL_SECONDS = min(int(os.getenv('CANDIDATE_TOKEN_TTL_SECONDS', str(7 * 24 * 60 * 60))), 7 * 24 * 60 * 60)
 
 SENSITIVE_FIELDS = {
     'candidate_name',
@@ -34,6 +35,10 @@ SENSITIVE_FIELDS = {
     'email',
     'phone',
 }
+
+
+def _log_error(event: str, error: Exception | str, **fields):
+    print(json.dumps({'level': 'error', 'event': event, 'error': str(error), **fields}, default=str))
 
 
 def _get_db():
@@ -125,12 +130,9 @@ def build_assessment_key(room_id: str = '', campaign_id: str = '', link_id: str 
 
 
 def _token_secret() -> bytes:
-    secret = (
-        os.getenv('CANDIDATE_LINK_SECRET')
-        or os.getenv('SECRET_KEY')
-        or os.getenv('GEMINI_API_KEY')
-        or 'dev-candidate-link-secret'
-    )
+    secret = os.getenv('CANDIDATE_TOKEN_SECRET')
+    if not secret:
+        raise RuntimeError('CANDIDATE_TOKEN_SECRET is required for candidate link tokens')
     return secret.encode('utf-8')
 
 
@@ -143,14 +145,17 @@ def _b64url_decode(raw: str) -> bytes:
     return base64.urlsafe_b64decode(raw + pad)
 
 
-def create_candidate_token(link_id: str, room_id: str, email: str = '', phone: str = '', custom_id: str = '') -> str:
+def create_candidate_token(link_id: str, room_id: str, email: str = '', phone: str = '', custom_id: str = '', session_id: str = '') -> str:
+    now = utcnow()
     payload = {
         'link_id': link_id,
         'room_id': room_id,
+        'session_id': session_id,
         'email_hash': hash_value(normalize_email(email)) if normalize_email(email) else '',
         'phone_hash': hash_value(normalize_phone(phone)) if normalize_phone(phone) else '',
         'custom_id_hash': hash_value(normalize_custom_id(custom_id)) if normalize_custom_id(custom_id) else '',
-        'issued_at': utcnow_iso(),
+        'iat': int(now.timestamp()),
+        'exp': int((now + dt.timedelta(seconds=_TOKEN_TTL_SECONDS)).timestamp()),
         'nonce': secrets.token_hex(8),
     }
     encoded = _b64url_encode(json.dumps(payload, separators=(',', ':')).encode('utf-8'))
@@ -158,7 +163,7 @@ def create_candidate_token(link_id: str, room_id: str, email: str = '', phone: s
     return f'{encoded}.{_b64url_encode(signature)}'
 
 
-def verify_candidate_token(token: str) -> dict[str, Any]:
+def verify_candidate_token(token: str, expected_room_id: str = '', expected_session_id: str = '') -> dict[str, Any]:
     if not token or '.' not in token:
         raise ValueError('Invalid token')
     encoded, provided_sig = token.split('.', 1)
@@ -166,6 +171,13 @@ def verify_candidate_token(token: str) -> dict[str, Any]:
     if not hmac.compare_digest(provided_sig, expected_sig):
         raise ValueError('Token signature mismatch')
     payload = json.loads(_b64url_decode(encoded).decode('utf-8'))
+    exp = int(payload.get('exp') or 0)
+    if not exp or exp < int(utcnow().timestamp()):
+        raise ValueError('Token expired')
+    if expected_room_id and payload.get('room_id') != expected_room_id:
+        raise ValueError('Token room mismatch')
+    if expected_session_id and payload.get('session_id') and payload.get('session_id') != expected_session_id:
+        raise ValueError('Token session mismatch')
     return payload
 
 
@@ -280,15 +292,17 @@ def upsert_candidate_progress(payload: dict[str, Any]) -> dict[str, Any]:
     if profile_doc is not None:
         try:
             profile_doc.set(profile, merge=True)
-        except Exception:
-            pass
+        except Exception as err:
+            _log_error('candidate_profile.write_failed', err, candidate_id=candidate_id, session_id=session_id)
+            raise
 
     submission_doc = _submission_doc(session_id)
     if submission_doc is not None:
         try:
             submission_doc.set(submission, merge=True)
-        except Exception:
-            pass
+        except Exception as err:
+            _log_error('candidate_submission.write_failed', err, candidate_id=candidate_id, session_id=session_id)
+            raise
 
     return submission
 
@@ -336,8 +350,9 @@ def log_candidate_actions(actions: list[dict[str, Any]]) -> int:
         if collection is not None:
             try:
                 collection.document(action['id']).set(action, merge=True)
-            except Exception:
-                pass
+            except Exception as err:
+                _log_error('candidate_action.write_failed', err, action_id=action['id'], session_id=session_id)
+                raise
     return persisted
 
 
@@ -408,12 +423,14 @@ def _load_submissions(candidate_id: str = '', assessment_key: str = '') -> list[
     return results
 
 
-def lookup_candidate_by_token(token: str) -> dict[str, Any]:
-    payload = verify_candidate_token(token)
+def lookup_candidate_by_token(token: str, expected_room_id: str = '', expected_session_id: str = '') -> dict[str, Any]:
+    payload = verify_candidate_token(token, expected_room_id=expected_room_id, expected_session_id=expected_session_id)
     link_id = payload.get('link_id', '')
     link_data = _load_link(link_id)
     if not link_data:
         raise LookupError('Link token could not be resolved')
+    if payload.get('room_id') and link_data.get('roomId') and payload.get('room_id') != link_data.get('roomId'):
+        raise ValueError('Token does not match link room')
 
     candidate_id = build_candidate_key(
         email=link_data.get('forEmail', ''),

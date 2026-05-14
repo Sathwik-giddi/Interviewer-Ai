@@ -9,6 +9,7 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { apiUrl, routePathFromAppUrl } from '../lib/runtimeConfig'
+import { authFetch } from '../utils/api'
 
 export default function LinkRedirect() {
   const { linkId } = useParams()
@@ -25,7 +26,7 @@ export default function LinkRedirect() {
 
   async function validateAndRedirect() {
     try {
-      const res = await fetch(apiUrl(`/api/link/${encodeURIComponent(linkId)}`))
+      const res = await authFetch(apiUrl(`/api/link/${encodeURIComponent(linkId)}`))
       if (!res.ok) {
         setError('This link is invalid or has expired.')
         return
@@ -45,8 +46,7 @@ export default function LinkRedirect() {
       } else if (link.type === 'mock') {
         navigate(`/mock?token=${link.linkId}`, { replace: true })
       } else if (link.roomId) {
-        const tokenPart = link.candidateToken ? `?token=${encodeURIComponent(link.candidateToken)}` : ''
-        navigate(`/interview/${link.roomId}${tokenPart}`, { replace: true })
+        setError('This short link cannot expose the private candidate token. Please use the full invitation link from HR.')
       } else {
         setError('Link data is incomplete. Please contact HR.')
       }
